@@ -1,0 +1,19 @@
+project_id = "clitxvzecgtdtracpbnt"
+
+# send-email defaults to verify_jwt=true on hosted Supabase; the client must pass a user JWT.
+# Registration with “confirm email” returns no session — see Register.tsx (welcome email only when session exists).
+
+[functions.check-subscription]
+verify_jwt = false
+
+[functions.create-paypal-checkout]
+verify_jwt = false
+
+[functions.capture-paypal-order]
+verify_jwt = false
+
+[functions.customer-portal]
+verify_jwt = false
+
+[functions.activate-paypal-subscription]
+verify_jwt = false

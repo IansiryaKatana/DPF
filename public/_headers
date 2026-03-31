@@ -1,0 +1,3 @@
+# Netlify / compatible static hosts — allows PayPal checkout helper windows
+/*
+  Cross-Origin-Opener-Policy: same-origin-allow-popups
