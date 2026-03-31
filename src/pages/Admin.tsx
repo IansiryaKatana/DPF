@@ -10,12 +10,24 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import {
-  Settings, Users, CreditCard, FileText, LogOut, Shield, Save,
+  Settings, Users, CreditCard, FileText, Shield, Save,
   Eye, EyeOff, CheckCircle, Clock, AlertTriangle, Building2, Receipt, Mail
 } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import BrandingSettings from "@/components/admin/BrandingSettings";
 import InvoiceManager from "@/components/admin/InvoiceManager";
 import EmailLogView from "@/components/admin/EmailLogView";
@@ -55,7 +67,7 @@ const Admin = () => {
   }, [user, session, loading, isAdmin, navigate]);
 
   useEffect(() => {
-    if (!user || !session || !isAdmin) return;
+    if (loading || !user || !session || !isAdmin) return;
 
     const fetchData = async () => {
       // Fetch admin settings
@@ -74,11 +86,8 @@ const Admin = () => {
       // Fetch demo requests
       const { data: demos, error: demosErr } = await supabase.from("demo_requests").select("*").order("created_at", { ascending: false });
       if (demosErr) {
-        if (demosErr.code === "42501") {
-          toast.error("Admin permissions are missing for this account.");
-        } else {
-          console.error("Demo requests fetch error:", demosErr);
-        }
+        // Avoid noisy permission toasts; guard/redirect handles unauthorized users.
+        console.error("Demo requests fetch error:", demosErr);
       }
       setDemoRequests(demos || []);
 
@@ -106,7 +115,7 @@ const Admin = () => {
       if (apm?.setting_value) setActivePaymentMethod(apm.setting_value);
     };
     fetchData();
-  }, [user, session, isAdmin]);
+  }, [user, session, isAdmin, loading]);
 
 
   const saveSetting = async (key: string, value: string, isEncrypted = true) => {
@@ -226,9 +235,30 @@ const Admin = () => {
             <Badge variant="secondary" className="ml-2">Admin</Badge>
           </div>
           <div className="flex items-center gap-4">
-            <Button variant="ghost" size="sm" onClick={() => { signOut(); navigate("/"); }}>
-              <LogOut className="w-4 h-4 mr-2" /> Sign Out
-            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  size="sm"
+                  className="bg-foreground text-background hover:bg-foreground/85"
+                >
+                  Sign Out <ArrowUpRight className="w-4 h-4 ml-2" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Sign out?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    You will be logged out of your DataPulseFlow admin dashboard.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => { signOut(); navigate("/"); }}>
+                    Sign Out
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </div>
       </nav>
