@@ -112,12 +112,6 @@ const HeroSection = () => {
               </motion.div>
             </div>
 
-            {/* Bottom Labels */}
-            <div className="absolute bottom-4 md:bottom-6 lg:bottom-8 left-0 right-0 flex justify-center gap-3 lg:gap-4 px-6">
-              <span className="bg-hero-card border border-border rounded-full px-3 md:px-4 lg:px-5 py-1.5 lg:py-2 text-xs lg:text-sm font-medium text-foreground shadow-sm">Webhooks</span>
-              <span className="bg-hero-card border border-border rounded-full px-3 md:px-4 lg:px-5 py-1.5 lg:py-2 text-xs lg:text-sm font-medium text-foreground shadow-sm">Sync</span>
-              <span className="bg-hero-card border border-border rounded-full px-3 md:px-4 lg:px-5 py-1.5 lg:py-2 text-xs lg:text-sm font-medium text-foreground shadow-sm">Monitor</span>
-            </div>
           </motion.div>
         </div>
       </div>

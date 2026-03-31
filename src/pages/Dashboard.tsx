@@ -4,13 +4,24 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { PLANS, getPlanByProductId, PlanKey } from "@/config/plans";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { PayPalButtons, PayPalScriptProvider } from "@paypal/react-paypal-js";
 import {
-  CreditCard, Key, FileText, LogOut, Clock, CheckCircle, AlertTriangle,
+  CreditCard, Key, FileText, ArrowUpRight, Clock, CheckCircle, AlertTriangle,
   Activity, Shield, Zap, BarChart3, ExternalLink, Download
 } from "lucide-react";
 
@@ -25,7 +36,6 @@ const Dashboard = () => {
     subscription_end: string | null;
     status: string | null;
   } | null>(null);
-  const [credentials, setCredentials] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [profile, setProfile] = useState<any>(null);
   const [checkingOut, setCheckingOut] = useState<string | null>(null);
@@ -33,9 +43,8 @@ const Dashboard = () => {
   const [demoApproved, setDemoApproved] = useState<boolean | null>(null);
   const [activePaymentMethod, setActivePaymentMethod] = useState<string>("stripe");
   const [paypalClientId, setPaypalClientId] = useState<string>("");
-  /** Must match Admin → PayPal “Sandbox mode” so plan IDs (P-…) resolve in the same environment as the REST app. */
+  /** Must match Admin PayPal sandbox toggle for the checkout app credentials. */
   const [paypalSandboxMode, setPaypalSandboxMode] = useState(true);
-  const [paypalPlanIds, setPaypalPlanIds] = useState<Record<string, string>>({});
   const [clientDeliverableZipUrl, setClientDeliverableZipUrl] = useState("");
   const [resolvedDeliverableUrl, setResolvedDeliverableUrl] = useState<string>("");
   const [resolvingDeliverable, setResolvingDeliverable] = useState(false);
@@ -43,6 +52,7 @@ const Dashboard = () => {
   const [functionsErrorMessage, setFunctionsErrorMessage] = useState<string | null>(null);
   const [isProcessingPayPalPayment, setIsProcessingPayPalPayment] = useState(false);
   const [nowMs, setNowMs] = useState<number>(Date.now());
+  const [latestAccessCode, setLatestAccessCode] = useState<any | null>(null);
 
   const getFreshAccessToken = useCallback(async () => {
     const { data, error } = await supabase.auth.getSession();
@@ -148,9 +158,8 @@ const Dashboard = () => {
     if (!user || !session) return;
 
     const fetchData = async () => {
-      const [subRes, credRes, invRes, profRes, settingsRes] = await Promise.all([
+      const [subRes, invRes, profRes, settingsRes, codeRes] = await Promise.all([
         supabase.from("subscriptions").select("*").eq("user_id", user.id).maybeSingle(),
-        supabase.from("api_credentials").select("*").eq("user_id", user.id),
         supabase.from("invoices").select("*").eq("user_id", user.id).order("invoice_date", { ascending: false }).then(res => {
           // Client-side overdue detection
           const now = new Date();
@@ -170,13 +179,17 @@ const Dashboard = () => {
             "active_payment_method",
             "paypal_client_id",
             "paypal_sandbox_mode",
-            "paypal_plan_id_growth",
-            "paypal_plan_id_pro",
             "client_deliverable_zip_url",
           ]),
+        supabase
+          .from("client_access_codes")
+          .select("*")
+          .eq("user_id", user.id)
+          .order("expires_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
       ]);
       setSubscription(subRes.data);
-      setCredentials(credRes.data || []);
       setInvoices(invRes.data || []);
       setProfile(profRes.data);
       setDemoApproved(null);
@@ -187,12 +200,9 @@ const Dashboard = () => {
       if (paypalClientIdSetting?.setting_value) setPaypalClientId(paypalClientIdSetting.setting_value.trim());
       const sandboxSetting = settingsRows.find((s: any) => s.setting_key === "paypal_sandbox_mode");
       setPaypalSandboxMode(sandboxSetting?.setting_value !== "false");
-      setPaypalPlanIds({
-        growth: (settingsRows.find((s: any) => s.setting_key === "paypal_plan_id_growth")?.setting_value || "").trim(),
-        pro: (settingsRows.find((s: any) => s.setting_key === "paypal_plan_id_pro")?.setting_value || "").trim(),
-      });
       const deliverableUrl = (settingsRows.find((s: any) => s.setting_key === "client_deliverable_zip_url")?.setting_value || "").trim();
       setClientDeliverableZipUrl(deliverableUrl);
+      setLatestAccessCode(codeRes.data || null);
     };
     fetchData();
     checkSubscription();
@@ -227,15 +237,26 @@ const Dashboard = () => {
         const data = await callEdgeFunction<{ status?: string }>("capture-paypal-order", { orderId });
         if (data?.status === "COMPLETED") {
           toast.success("PayPal card payment completed successfully.");
+          if ((data as any)?.accessCode) {
+            toast.success(`New 30-day access code issued: ${(data as any).accessCode}`);
+          }
         } else {
           toast.info("PayPal payment authorized. Please confirm status in admin.");
         }
-        const [{ data: subData }, { data: invData }] = await Promise.all([
+        const [{ data: subData }, { data: invData }, { data: codeData }] = await Promise.all([
           supabase.from("subscriptions").select("*").eq("user_id", user?.id ?? "").maybeSingle(),
           supabase.from("invoices").select("*").eq("user_id", user?.id ?? "").order("invoice_date", { ascending: false }),
+          supabase
+            .from("client_access_codes")
+            .select("*")
+            .eq("user_id", user?.id ?? "")
+            .order("expires_at", { ascending: false })
+            .limit(1)
+            .maybeSingle(),
         ]);
         if (subData) setSubscription(subData);
         setInvoices(invData || []);
+        setLatestAccessCode(codeData || null);
       } finally {
         setIsProcessingPayPalPayment(false);
       }
@@ -269,12 +290,23 @@ const Dashboard = () => {
       const data = await callEdgeFunction<{ status?: string }>("capture-paypal-order", { orderId });
       if (data?.status === "COMPLETED") {
         toast.success("PayPal payment completed successfully.");
+        if (data?.accessCode) {
+          toast.success(`New 30-day access code issued: ${data.accessCode}`);
+        }
         const [{ data: subData }, { data: invData }] = await Promise.all([
           supabase.from("subscriptions").select("*").eq("user_id", user?.id ?? "").maybeSingle(),
           supabase.from("invoices").select("*").eq("user_id", user?.id ?? "").order("invoice_date", { ascending: false }),
         ]);
+        const { data: codeData } = await supabase
+          .from("client_access_codes")
+          .select("*")
+          .eq("user_id", user?.id ?? "")
+          .order("expires_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
         if (subData) setSubscription(subData);
         setInvoices(invData || []);
+        setLatestAccessCode(codeData || null);
       } else {
         toast.info("PayPal payment authorized. Please confirm status in admin.");
       }
@@ -358,18 +390,17 @@ const Dashboard = () => {
   const showCurrentPlanSummary = isSubscribed && paidPlanKey != null && paidPlanKey in PLANS;
   const subStatus = stripeStatus?.status || subscription?.status || "trialing";
 
-  const trialDaysLeft = subscription?.trial_end
-    ? Math.max(0, Math.ceil((new Date(subscription.trial_end).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
-    : 7;
   const trialRemainingMs = subscription?.trial_end
     ? Math.max(0, new Date(subscription.trial_end).getTime() - nowMs)
     : 7 * 24 * 60 * 60 * 1000;
+  const trialDaysLeft = Math.floor(trialRemainingMs / (24 * 60 * 60 * 1000));
   const trialHours = Math.floor((trialRemainingMs % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
   const trialMinutes = Math.floor((trialRemainingMs % (60 * 60 * 1000)) / (60 * 1000));
   const trialSeconds = Math.floor((trialRemainingMs % (60 * 1000)) / 1000);
   const trialCountdown = `${trialDaysLeft}d ${String(trialHours).padStart(2, "0")}h ${String(trialMinutes).padStart(2, "0")}m ${String(trialSeconds).padStart(2, "0")}s`;
 
   const isTrialing = subStatus === "trialing" && !isSubscribed;
+  const isTrialExpired = isTrialing && trialRemainingMs <= 0;
   const nextBillingDate = stripeStatus?.subscription_end
     ? new Date(stripeStatus.subscription_end).toLocaleDateString()
     : null;
@@ -377,6 +408,14 @@ const Dashboard = () => {
     ? new Date(subscription.current_period_end).toLocaleDateString()
     : null;
   const displayNextBilling = nextBillingDate || paypalNextBillingDate;
+  const accessCodeExpiryMs = latestAccessCode?.expires_at ? new Date(latestAccessCode.expires_at).getTime() : 0;
+  const isLifetimeCode = latestAccessCode?.plan === "enterprise";
+  const accessCodeValid = Boolean(
+    latestAccessCode &&
+      latestAccessCode.status === "active" &&
+      (isLifetimeCode || accessCodeExpiryMs > nowMs),
+  );
+  const isSystemLocked = !accessCodeValid;
 
   return (
     <div className="min-h-screen bg-background">
@@ -397,7 +436,7 @@ const Dashboard = () => {
         </div>
       )}
       {/* Top nav */}
-      <nav className="border-b border-border bg-card">
+      <nav className="bg-card/90 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
@@ -410,9 +449,30 @@ const Dashboard = () => {
           </div>
           <div className="flex items-center gap-4">
             <span className="text-sm text-muted-foreground hidden sm:block">{profile?.email || user?.email}</span>
-            <Button variant="ghost" size="sm" onClick={() => { signOut(); navigate("/"); }}>
-              <LogOut className="w-4 h-4 mr-2" /> Sign Out
-            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  size="sm"
+                  className="bg-foreground text-background hover:bg-foreground/85"
+                >
+                  Sign Out <ArrowUpRight className="w-4 h-4 ml-2" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Sign out?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    You will be logged out of your DataPulseFlow dashboard.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => { signOut(); navigate("/"); }}>
+                    Sign Out
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </div>
       </nav>
@@ -421,7 +481,7 @@ const Dashboard = () => {
         {/* Pending Approval Gate */}
         {demoApproved === false && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-            <Card className="mb-6 border-2 border-destructive/30 bg-destructive/5">
+            <Card className="mb-6 border-0 bg-gradient-to-r from-destructive/20 via-destructive/10 to-transparent shadow-sm">
               <CardContent className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 gap-4">
                 <div className="flex items-center gap-3">
                   <AlertTriangle className="w-5 h-5 text-destructive" />
@@ -446,17 +506,29 @@ const Dashboard = () => {
         {/* Trial Banner */}
         {isTrialing && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
-            <Card className="mb-6 border-2 border-accent bg-accent/20">
+            <Card
+              className={`mb-6 border-0 shadow-sm ${
+                isTrialExpired
+                  ? "bg-gradient-to-r from-[#4a1212] via-[#7a1f1f] to-[#b73232]"
+                  : "bg-gradient-to-r from-[#122a4a] via-[#1b3e69] to-[#25548a]"
+              }`}
+            >
               <CardContent className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 gap-4">
                 <div className="flex items-center gap-3">
-                  <Clock className="w-5 h-5 text-primary" />
+                  <Clock className="w-5 h-5 text-white" />
                   <div>
-                    <p className="font-medium text-foreground">Free Trial — {trialDaysLeft} days remaining</p>
-                    <p className="text-sm text-muted-foreground">Add a payment method to continue after your trial</p>
+                    <p className="font-medium text-white">
+                      {isTrialExpired ? "Free Trial Expired" : `Free Trial — ${trialDaysLeft} days remaining`}
+                    </p>
+                    <p className="text-sm text-white/85">
+                      {isTrialExpired
+                        ? "Renew with a paid plan to continue access."
+                        : "Add a payment method to continue after your trial"}
+                    </p>
                   </div>
                 </div>
-                <div className="text-sm font-semibold text-primary bg-primary/10 border border-primary/20 rounded-md px-3 py-2">
-                  Trial countdown: {trialCountdown}
+                <div className="text-lg sm:text-xl font-bold text-white bg-white/15 rounded-md px-3 py-2 tracking-wide">
+                  {trialCountdown}
                 </div>
               </CardContent>
             </Card>
@@ -466,13 +538,18 @@ const Dashboard = () => {
         {/* Stats Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           {[
-            { icon: Activity, label: "Sync Status", value: "Active", color: "text-green-600" },
+            {
+              icon: Activity,
+              label: "Sync Status",
+              value: isSystemLocked ? "Locked" : "Active",
+              color: isSystemLocked ? "text-destructive" : "text-green-600",
+            },
             { icon: Zap, label: "Webhooks", value: "6 Active", color: "text-primary" },
             { icon: Shield, label: "Security", value: "HMAC Verified", color: "text-primary" },
             { icon: BarChart3, label: "Invoices Logged", value: String(invoices.length), color: "text-primary" },
           ].map((stat, i) => (
             <motion.div key={i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 * i }}>
-              <Card>
+              <Card className="border-0 bg-gradient-to-br from-card via-card to-muted/20 shadow-sm">
                 <CardContent className="flex items-center gap-4 p-4">
                   <div className="p-2 rounded-lg bg-accent/50">
                     <stat.icon className={`w-5 h-5 ${stat.color}`} />
@@ -489,7 +566,7 @@ const Dashboard = () => {
 
         {/* Subscription + Payment - only show active method */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
-          <Card className="mb-8">
+          <Card className="mb-8 border-0 bg-gradient-to-br from-card via-card to-muted/15 shadow-sm">
             <CardHeader>
               <div className="flex items-center gap-2">
                 <CreditCard className="w-5 h-5 text-primary" />
@@ -502,7 +579,7 @@ const Dashboard = () => {
             <CardContent>
               {/* Current Plan */}
               {showCurrentPlanSummary && paidPlanKey && (
-                <div className="mb-6 rounded-xl border border-primary/30 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-5">
+                <div className="mb-6 rounded-xl bg-gradient-to-r from-primary/20 via-primary/10 to-transparent p-5">
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                     <div>
                       <p className="text-xs uppercase tracking-wider text-primary/80 mb-1">Current Plan</p>
@@ -568,12 +645,17 @@ const Dashboard = () => {
                   .map(([key, plan]) => {
                   const isCurrent = currentPlan === key;
                   const isEnterprise = key === "enterprise";
+                  const planShadeClass = isCurrent
+                    ? "bg-gradient-to-br from-sky-500/40 via-sky-500/30 to-sky-500/20 shadow-lg shadow-sky-500/25"
+                    : key === "growth"
+                    ? "bg-gradient-to-br from-sky-500/20 via-sky-400/10 to-transparent shadow-md shadow-sky-500/20"
+                    : key === "pro"
+                    ? "bg-gradient-to-br from-sky-500/30 via-sky-400/20 to-transparent shadow-md shadow-sky-500/25"
+                    : "bg-gradient-to-br from-sky-600/40 via-sky-500/25 to-transparent shadow-md shadow-sky-600/30";
                   return (
                     <div
                       key={key}
-                      className={`rounded-xl border p-5 flex flex-col ${
-                        isCurrent ? "border-primary bg-primary/5" : "border-border"
-                      }`}
+                      className={`rounded-xl p-5 flex flex-col min-h-[240px] ${planShadeClass}`}
                     >
                       <div className="mb-4">
                         {isCurrent && (
@@ -602,82 +684,14 @@ const Dashboard = () => {
                               ? "Current"
                               : checkingOut === key
                               ? "Loading..."
-                              : plan.billing_type === "one_time"
-                              ? "Pay One-Time"
-                              : "Start Auto-Billing"}
+                              : "Pay One-Time"}
                           </Button>
                         )}
 
                         {activePaymentMethod === "paypal" && !isCurrent && (
-                          <div className="w-full rounded-lg border border-border p-2 bg-card">
+                          <div className="w-full rounded-lg p-2 bg-background/70 backdrop-blur-sm">
                             {!paypalClientId ? (
                               <p className="text-xs text-destructive">PayPal Client ID not configured for embedded checkout.</p>
-                            ) : plan.billing_type === "recurring" ? (
-                              !paypalPlanIds[key] ? (
-                                <p className="text-xs text-destructive">
-                                  Recurring checkout needs a PayPal Subscription Plan ID (starts with{" "}
-                                  <span className="font-mono">P-</span>). In{" "}
-                                  <span className="font-medium">Admin → Payments → PayPal</span>, save{" "}
-                                  {key === "growth" ? "Growth" : "Pro"} Recurring Plan ID — this is unrelated to whether
-                                  a client already has a plan; every shopper upgrading to this tier needs it configured
-                                  once.
-                                </p>
-                              ) : (
-                                <PayPalScriptProvider
-                                  options={{
-                                    clientId: paypalClientId,
-                                    currency: "USD",
-                                    environment: paypalSandboxMode ? "sandbox" : "production",
-                                    intent: "subscription",
-                                    vault: true,
-                                    components: "buttons",
-                                    "disable-funding": "paylater,venmo",
-                                    // Isolated SDK load: otherwise a sibling card (Enterprise capture) loads
-                                    // intent=capture&vault=false first and breaks createSubscription.
-                                    dataNamespace: "paypalSubscriptions",
-                                  }}
-                                >
-                                  <PayPalButtons
-                                    style={{ layout: "vertical", shape: "rect", label: "subscribe" }}
-                                    forceReRender={[paypalSandboxMode, paypalClientId, paypalPlanIds[key] || ""]}
-                                    createSubscription={(_data, actions) =>
-                                      actions.subscription.create({
-                                        plan_id: paypalPlanIds[key],
-                                        custom_id: `${user?.id}:${key}`,
-                                      })
-                                    }
-                                    onApprove={async (data) => {
-                                      if (!data.subscriptionID) throw new Error("PayPal subscription ID missing");
-                                      await callEdgeFunction("activate-paypal-subscription", {
-                                        subscriptionId: data.subscriptionID,
-                                        planKey: key,
-                                      });
-                                      toast.success("PayPal subscription is active.");
-                                      const [{ data: subData }, { data: invData }] = await Promise.all([
-                                        supabase.from("subscriptions").select("*").eq("user_id", user?.id ?? "").maybeSingle(),
-                                        supabase.from("invoices").select("*").eq("user_id", user?.id ?? "").order("invoice_date", { ascending: false }),
-                                      ]);
-                                      if (subData) setSubscription(subData);
-                                      setInvoices(invData || []);
-                                    }}
-                                    onError={(err) => {
-                                      console.error("[PAYPAL DEBUG] Subscription checkout error", err);
-                                      const msg = typeof err === "object" && err && "message" in err ? String((err as Error).message) : String(err);
-                                      if (/popup/i.test(msg) || /blocked/i.test(msg)) {
-                                        toast.error("Pop-up was blocked. Allow pop-ups for this site or try another browser, then try again.");
-                                      } else if (/RESOURCE_NOT_FOUND|INVALID_RESOURCE_ID/i.test(msg)) {
-                                        toast.error(
-                                          paypalSandboxMode
-                                            ? "PayPal could not find this plan ID in Sandbox. Create the plan in the Sandbox Business account (or turn off Sandbox in Admin if you use live plan IDs)."
-                                            : "PayPal could not find this plan ID in Production. Use plan IDs from your live PayPal account, or enable Sandbox in Admin and use sandbox plan IDs."
-                                        );
-                                      } else {
-                                        toast.error("PayPal recurring checkout failed.");
-                                      }
-                                    }}
-                                  />
-                                </PayPalScriptProvider>
-                              )
                             ) : (
                               <PayPalScriptProvider
                                 options={{
@@ -730,11 +744,6 @@ const Dashboard = () => {
                                 />
                               </PayPalScriptProvider>
                             )}
-                            <p className="text-xs text-muted-foreground mt-2">
-                              {plan.billing_type === "recurring"
-                                ? "Secure recurring billing with PayPal vault and subscription authorization."
-                                : "Secure card entry powered by PayPal. No PayPal account required where guest card checkout is eligible."}
-                            </p>
                           </div>
                         )}
                       </div>
@@ -744,7 +753,7 @@ const Dashboard = () => {
               </div>
 
               <p className="text-xs text-muted-foreground mt-4 text-center">
-                Growth and Pro auto-renew monthly from signup date. Enterprise is one-time billing only.
+                Every plan is one-time PayPal checkout and issues a 30-day access code.
               </p>
               {functionsErrorMessage && (
                 <p className="text-xs text-destructive mt-2 text-center">{functionsErrorMessage}</p>
@@ -753,10 +762,46 @@ const Dashboard = () => {
           </Card>
         </motion.div>
 
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.32 }}>
+          <Card className="mb-8 border-0 bg-gradient-to-br from-card via-card to-primary/5 shadow-sm">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Key className="w-5 h-5 text-primary" />
+                <CardTitle className="text-xl">{isLifetimeCode ? "Lifetime Access Code" : "30-Day Access Code"}</CardTitle>
+              </div>
+              <CardDescription>
+                {isSystemLocked
+                  ? "Your access code expired. Data pulling is locked until a new valid code is entered."
+                  : isLifetimeCode
+                  ? "Your Enterprise license is lifetime and keeps data pull access unlocked."
+                  : "Your data pull access is active while this code remains valid."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {latestAccessCode ? (
+                <div className="rounded-lg p-3 bg-muted/40">
+                  <p className="text-xs text-muted-foreground">Latest issued code</p>
+                  <p className="font-mono text-sm text-foreground">{latestAccessCode.code}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Expires: {new Date(latestAccessCode.expires_at).toLocaleString()}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No access code issued yet for this account.</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                {isLifetimeCode
+                  ? "Enter this code in SalesPortal Settings to unlock lifetime sync."
+                  : "Enter this code in SalesPortal Settings to unlock/continue sync for the next 30 days."}
+              </p>
+            </CardContent>
+          </Card>
+        </motion.div>
+
         {/* API Credentials */}
-        {isSubscribed && (
+        {isSubscribed && !isSystemLocked && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}>
-            <Card className="mb-8">
+            <Card className="mb-8 border-0 bg-gradient-to-br from-card via-card to-primary/5 shadow-sm">
               <CardHeader>
                 <div className="flex items-center gap-2">
                   <Download className="w-5 h-5 text-primary" />
@@ -778,44 +823,9 @@ const Dashboard = () => {
           </motion.div>
         )}
 
-        {/* API Credentials */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
-          <Card className="mb-8">
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <Key className="w-5 h-5 text-primary" />
-                <CardTitle className="text-xl">Integration Credentials</CardTitle>
-              </div>
-              <CardDescription>Your API keys and webhook secrets for integration</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {credentials.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-6">No credentials configured yet. Contact your admin.</p>
-              ) : (
-                <div className="space-y-3">
-                  {credentials.map((cred: any) => (
-                    <div key={cred.id} className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-3 rounded-lg border border-border gap-2">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-2 h-2 rounded-full ${cred.is_active ? "bg-green-500" : "bg-muted-foreground"}`} />
-                        <div>
-                          <p className="text-sm font-medium text-foreground">{cred.credential_name}</p>
-                          <p className="text-xs text-muted-foreground font-mono">{cred.credential_value}</p>
-                        </div>
-                      </div>
-                      <Badge variant={cred.is_active ? "default" : "secondary"}>
-                        {cred.is_active ? "Active" : "Inactive"}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </motion.div>
-
         {/* Invoices - live data only */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
-          <Card>
+          <Card className="border-0 bg-gradient-to-br from-card via-card to-muted/10 shadow-sm">
             <CardHeader>
               <div className="flex items-center gap-2">
                 <FileText className="w-5 h-5 text-primary" />
@@ -830,7 +840,7 @@ const Dashboard = () => {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-border">
+                      <tr className="bg-muted/30">
                         <th className="text-left py-2 text-muted-foreground font-medium">Description</th>
                         <th className="text-left py-2 text-muted-foreground font-medium">Date</th>
                         <th className="text-left py-2 text-muted-foreground font-medium">Amount</th>
@@ -842,7 +852,7 @@ const Dashboard = () => {
                       {invoices.map((inv: any) => (
                         <tr
                           key={inv.id}
-                          className="border-b border-border/50 cursor-pointer hover:bg-muted/50 transition-colors"
+                          className="cursor-pointer hover:bg-muted/50 transition-colors"
                           onClick={() => navigate(`/invoice/${inv.id}`)}
                         >
                           <td className="py-3 text-foreground">{inv.description || "—"}</td>

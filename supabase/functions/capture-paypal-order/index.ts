@@ -13,6 +13,13 @@ serve(async (req) => {
   }
 
   try {
+    const buildAccessCode = () => {
+      const charset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const chunk = (size: number) =>
+        Array.from({ length: size }, () => charset[Math.floor(Math.random() * charset.length)]).join("");
+      return `DPF-${chunk(4)}-${chunk(4)}-${chunk(4)}`;
+    };
+
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
@@ -95,7 +102,11 @@ serve(async (req) => {
     }
 
     const nowIso = new Date().toISOString();
-    const periodEndIso = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const isEnterprise = plan === "enterprise";
+    const periodEndIso = isEnterprise
+      ? new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000).toISOString()
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const accessCode = buildAccessCode();
     const captureId =
       captureJson.purchase_units?.[0]?.payments?.captures?.[0]?.id ?? orderId;
 
@@ -132,12 +143,27 @@ serve(async (req) => {
       throw new Error(`Failed to create invoice: ${invoiceError.message}`);
     }
 
+    const { error: codeError } = await supabase.from("client_access_codes").insert({
+      user_id: userData.user.id,
+      code: accessCode,
+      plan,
+      status: "active",
+      issued_at: nowIso,
+      expires_at: periodEndIso,
+    });
+    if (codeError) {
+      throw new Error(`Failed to issue access code: ${codeError.message}`);
+    }
+
     return new Response(
       JSON.stringify({
         status: captureJson.status,
         orderId: captureJson.id,
         captureId,
         plan,
+        lifetime: isEnterprise,
+        accessCode,
+        accessCodeExpiresAt: periodEndIso,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -77,6 +77,42 @@ export type Database = {
         }
         Relationships: []
       }
+      client_access_codes: {
+        Row: {
+          code: string
+          created_at: string
+          expires_at: string
+          id: string
+          issued_at: string
+          plan: string
+          redeemed_at: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          expires_at: string
+          id?: string
+          issued_at?: string
+          plan?: string
+          redeemed_at?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          issued_at?: string
+          plan?: string
+          redeemed_at?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       demo_requests: {
         Row: {
           approved: boolean

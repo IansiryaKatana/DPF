@@ -28,8 +28,6 @@ const Admin = () => {
     clientId: "",
     clientSecret: "",
     sandboxMode: true,
-    growthPlanId: "",
-    proPlanId: "",
   });
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
@@ -38,6 +36,13 @@ const Admin = () => {
   const [clients, setClients] = useState<any[]>([]);
   const [activePaymentMethod, setActivePaymentMethod] = useState<string>("stripe");
   const [clientDeliverableZipUrl, setClientDeliverableZipUrl] = useState("");
+
+  const buildAccessCode = () => {
+    const charset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const chunk = (size: number) =>
+      Array.from({ length: size }, () => charset[Math.floor(Math.random() * charset.length)]).join("");
+    return `DPF-${chunk(4)}-${chunk(4)}-${chunk(4)}`;
+  };
 
   useEffect(() => {
     if (!loading && (!user || !session)) {
@@ -62,8 +67,6 @@ const Admin = () => {
           if (s.setting_key === "paypal_client_id") setPaypal(prev => ({ ...prev, clientId: s.setting_value || "" }));
           if (s.setting_key === "paypal_client_secret") setPaypal(prev => ({ ...prev, clientSecret: s.setting_value || "" }));
           if (s.setting_key === "paypal_sandbox_mode") setPaypal(prev => ({ ...prev, sandboxMode: s.setting_value === "true" }));
-          if (s.setting_key === "paypal_plan_id_growth") setPaypal(prev => ({ ...prev, growthPlanId: s.setting_value || "" }));
-          if (s.setting_key === "paypal_plan_id_pro") setPaypal(prev => ({ ...prev, proPlanId: s.setting_value || "" }));
           if (s.setting_key === "client_deliverable_zip_url") setClientDeliverableZipUrl(s.setting_value || "");
         });
       }
@@ -87,6 +90,7 @@ const Admin = () => {
           const sub = subsData.find((s: any) => s.user_id === p.user_id);
           return {
             id: p.id,
+            user_id: p.user_id,
             name: p.full_name || p.email || "Unknown",
             email: p.email || "",
             plan: sub?.plan || "—",
@@ -123,8 +127,6 @@ const Admin = () => {
         await saveSetting("paypal_client_id", paypal.clientId, false);
         await saveSetting("paypal_client_secret", paypal.clientSecret);
         await saveSetting("paypal_sandbox_mode", String(paypal.sandboxMode), false);
-        await saveSetting("paypal_plan_id_growth", paypal.growthPlanId, false);
-        await saveSetting("paypal_plan_id_pro", paypal.proPlanId, false);
       }
       toast.success(`${provider === "stripe" ? "Stripe" : "PayPal"} credentials saved successfully!`);
     } catch (error: any) {
@@ -135,6 +137,39 @@ const Admin = () => {
   };
 
   const toggleSecret = (key: string) => setShowSecrets(prev => ({ ...prev, [key]: !prev[key] }));
+
+  const issueRenewalCode = async (client: any) => {
+    const code = buildAccessCode();
+    const nowIso = new Date().toISOString();
+    const expiresIso = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    try {
+      const { error: codeError } = await supabase.from("client_access_codes").insert({
+        user_id: client.user_id,
+        code,
+        plan: client.plan === "—" ? "growth" : client.plan,
+        status: "active",
+        issued_at: nowIso,
+        expires_at: expiresIso,
+      });
+      if (codeError) throw codeError;
+
+      const { error: subError } = await supabase
+        .from("subscriptions")
+        .update({
+          status: "active",
+          current_period_start: nowIso,
+          current_period_end: expiresIso,
+          trial_start: nowIso,
+          trial_end: expiresIso,
+        })
+        .eq("user_id", client.user_id);
+      if (subError) throw subError;
+
+      toast.success(`Issued renewal code for ${client.name}: ${code}`);
+    } catch (error: any) {
+      toast.error("Failed to issue renewal code: " + (error.message || "Unknown error"));
+    }
+  };
 
   const handleDeliverableUpload = async (file: File) => {
     if (!user?.id) {
@@ -337,27 +372,8 @@ const Admin = () => {
                     <Label htmlFor="sandbox" className="cursor-pointer">Sandbox Mode (for testing)</Label>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Subscription plan IDs (<span className="font-mono">P-…</span>) must be created in the{" "}
-                    <span className="font-medium">same</span> PayPal environment as this toggle — sandbox plans do not
-                    exist in live, and vice versa. A &quot;resource not found&quot; error almost always means a
-                    sandbox/live mismatch.
+                    PayPal is configured for one-time guest checkout only. Keep sandbox mode aligned with the client ID/secret environment.
                   </p>
-                  <div className="space-y-2">
-                    <Label>Growth Recurring Plan ID</Label>
-                    <Input
-                      value={paypal.growthPlanId}
-                      onChange={(e) => setPaypal({ ...paypal, growthPlanId: e.target.value })}
-                      placeholder="P-XXXXXXXXXXXX"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Pro Recurring Plan ID</Label>
-                    <Input
-                      value={paypal.proPlanId}
-                      onChange={(e) => setPaypal({ ...paypal, proPlanId: e.target.value })}
-                      placeholder="P-XXXXXXXXXXXX"
-                    />
-                  </div>
                   <Button onClick={() => handleSavePayment("paypal")} disabled={saving}>
                     <Save className="w-4 h-4 mr-2" />
                     {saving ? "Saving..." : "Save PayPal Credentials"}
@@ -445,6 +461,7 @@ const Admin = () => {
                         <th className="text-left py-2 text-muted-foreground font-medium hidden sm:table-cell">Email</th>
                         <th className="text-left py-2 text-muted-foreground font-medium">Plan</th>
                         <th className="text-left py-2 text-muted-foreground font-medium">Status</th>
+                        <th className="text-right py-2 text-muted-foreground font-medium">Access</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -459,6 +476,11 @@ const Admin = () => {
                               {client.status === "trialing" && <Clock className="w-3 h-3 mr-1" />}
                               {client.status}
                             </Badge>
+                          </td>
+                          <td className="py-3 text-right">
+                            <Button size="sm" variant="outline" onClick={() => issueRenewalCode(client)}>
+                              Issue 30-Day Code
+                            </Button>
                           </td>
                         </tr>
                       ))}

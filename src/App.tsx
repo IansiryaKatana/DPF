@@ -28,15 +28,26 @@ const App = () => (
         <AuthProvider>
           <Routes>
             <Route path="/" element={<Index />} />
+            <Route path="/dataflowwebsite" element={<Index />} />
             <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="/dataflowwebsite/privacy-policy" element={<PrivacyPolicy />} />
             <Route path="/terms-of-service" element={<TermsOfService />} />
+            <Route path="/dataflowwebsite/terms-of-service" element={<TermsOfService />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/salesportal/register" element={<Register />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/salesportal/login" element={<Login />} />
+            <Route path="/salesportal" element={<Login />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/salesportal/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/salesportal/reset-password" element={<ResetPassword />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/salesportal/dashboard" element={<Dashboard />} />
             <Route path="/admin" element={<Admin />} />
+            <Route path="/salesportal/admin" element={<Admin />} />
             <Route path="/invoice/:id" element={<InvoiceView />} />
+            <Route path="/salesportal/invoice/:id" element={<InvoiceView />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

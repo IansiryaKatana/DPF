@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.activate-paypal-subscription]
 verify_jwt = false
+
+[functions.validate-access-code]
+verify_jwt = false
