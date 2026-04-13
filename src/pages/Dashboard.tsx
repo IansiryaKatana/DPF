@@ -119,6 +119,16 @@ const Dashboard = () => {
   const [nowMs, setNowMs] = useState<number>(Date.now());
   const [latestAccessCode, setLatestAccessCode] = useState<any | null>(null);
   const processedPaystackReferences = useRef<Set<string>>(new Set());
+  const [paymentSuccessDialog, setPaymentSuccessDialog] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    accessCode?: string;
+  }>({
+    open: false,
+    title: "",
+    message: "",
+  });
 
   const getFreshAccessToken = useCallback(async () => {
     const { data, error } = await supabase.auth.getSession();
@@ -507,10 +517,14 @@ const Dashboard = () => {
         { reference },
       );
       if (data?.status === "COMPLETED") {
-        toast.success("Paystack payment completed successfully.");
-        if (data?.accessCode) {
-          toast.success(`New 30-day access code issued: ${data.accessCode}`);
-        }
+        setPaymentSuccessDialog({
+          open: true,
+          title: "Payment completed successfully",
+          message: data?.accessCode
+            ? "Your payment is confirmed and your new 30-day access code is ready."
+            : "Your payment is confirmed.",
+          accessCode: data?.accessCode,
+        });
         const [{ data: subData }, { data: invData }] = await Promise.all([
           supabase.from("subscriptions").select("*").eq("user_id", user?.id ?? "").maybeSingle(),
           supabase.from("invoices").select("*").eq("user_id", user?.id ?? "").order("invoice_date", { ascending: false }),
@@ -628,7 +642,20 @@ const Dashboard = () => {
   const trialSeconds = Math.floor((trialRemainingMs % (60 * 1000)) / 1000);
   const trialCountdown = `${trialDaysLeft}d ${String(trialHours).padStart(2, "0")}h ${String(trialMinutes).padStart(2, "0")}m ${String(trialSeconds).padStart(2, "0")}s`;
 
-  const isTrialing = subStatus === "trialing" && !isSubscribed;
+  const accessCodeExpiryMs = latestAccessCode?.expires_at ? new Date(latestAccessCode.expires_at).getTime() : 0;
+  const isLifetimeCode = latestAccessCode?.plan === "enterprise";
+  const hasActiveAccessCode = Boolean(
+    latestAccessCode &&
+      latestAccessCode.status === "active" &&
+      (isLifetimeCode || accessCodeExpiryMs > nowMs),
+  );
+  const hasPaidAccessState =
+    isSubscribed ||
+    hasActiveAccessCode ||
+    Boolean(currentPlan) ||
+    Boolean(subscription?.plan && subscription?.plan !== "trial");
+
+  const isTrialing = subStatus === "trialing" && !hasPaidAccessState;
   const isTrialExpired = isTrialing && trialRemainingMs <= 0;
   const nextBillingDate = stripeStatus?.subscription_end
     ? new Date(stripeStatus.subscription_end).toLocaleDateString()
@@ -637,17 +664,59 @@ const Dashboard = () => {
     ? new Date(subscription.current_period_end).toLocaleDateString()
     : null;
   const displayNextBilling = nextBillingDate || paypalNextBillingDate;
-  const accessCodeExpiryMs = latestAccessCode?.expires_at ? new Date(latestAccessCode.expires_at).getTime() : 0;
-  const isLifetimeCode = latestAccessCode?.plan === "enterprise";
   const accessCodeValid = Boolean(
     latestAccessCode &&
       latestAccessCode.status === "active" &&
       (isLifetimeCode || accessCodeExpiryMs > nowMs),
   );
   const isSystemLocked = !accessCodeValid;
+  const accessCodeRemainingMs = !isLifetimeCode && accessCodeExpiryMs > 0
+    ? Math.max(0, accessCodeExpiryMs - nowMs)
+    : 0;
+  const accessCodeDaysLeft = Math.floor(accessCodeRemainingMs / (24 * 60 * 60 * 1000));
+  const accessCodeHours = Math.floor((accessCodeRemainingMs % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+  const accessCodeMinutes = Math.floor((accessCodeRemainingMs % (60 * 60 * 1000)) / (60 * 1000));
+  const accessCodeSeconds = Math.floor((accessCodeRemainingMs % (60 * 1000)) / 1000);
+  const accessCodeCountdown = `${accessCodeDaysLeft}d ${String(accessCodeHours).padStart(2, "0")}h ${String(accessCodeMinutes).padStart(2, "0")}m ${String(accessCodeSeconds).padStart(2, "0")}s`;
+  const showAccessCodeBanner =
+    hasPaidAccessState &&
+    hasActiveAccessCode &&
+    !isLifetimeCode &&
+    Boolean(latestAccessCode?.expires_at);
+  const showTrialBanner = isTrialing && !showAccessCodeBanner && !hasPaidAccessState;
+  const accessCodeExpiryLabel = latestAccessCode?.expires_at
+    ? new Date(latestAccessCode.expires_at).toLocaleString()
+    : null;
+  const accessCodeSeverityClass =
+    accessCodeRemainingMs <= 3 * 24 * 60 * 60 * 1000
+      ? "bg-gradient-to-r from-[#4a1212] via-[#7a1f1f] to-[#b73232]"
+      : accessCodeRemainingMs <= 7 * 24 * 60 * 60 * 1000
+      ? "bg-gradient-to-r from-[#5c3f12] via-[#8a631f] to-[#b88422]"
+      : "bg-gradient-to-r from-[#123d24] via-[#1d5a35] to-[#2f7a48]";
 
   return (
     <div className="min-h-screen bg-background">
+      <AlertDialog open={paymentSuccessDialog.open} onOpenChange={(open) => setPaymentSuccessDialog((prev) => ({ ...prev, open }))}>
+        <AlertDialogContent className="border-0 bg-gradient-to-br from-[#d8fce2] via-[#b9f6c8] to-[#8de3aa]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-[#0f3b22]">{paymentSuccessDialog.title}</AlertDialogTitle>
+            <AlertDialogDescription className="text-[#1a5130]">
+              {paymentSuccessDialog.message}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {paymentSuccessDialog.accessCode && (
+            <div className="rounded-lg border border-[#69c888] bg-white/70 p-3">
+              <p className="text-xs text-[#2f6b45]">30-day access code</p>
+              <p className="font-mono text-sm text-[#0f3b22]">{paymentSuccessDialog.accessCode}</p>
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogAction className="bg-[#1f7a42] text-white hover:bg-[#176334]">
+              Continue
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {isProcessingPayPalPayment && (
         <div className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-xl">
@@ -733,7 +802,7 @@ const Dashboard = () => {
         </motion.div>
 
         {/* Trial Banner */}
-        {isTrialing && (
+        {showTrialBanner && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
             <Card
               className={`mb-6 border-0 shadow-sm ${
@@ -758,6 +827,29 @@ const Dashboard = () => {
                 </div>
                 <div className="text-lg sm:text-xl font-bold text-white bg-white/15 rounded-md px-3 py-2 tracking-wide">
                   {trialCountdown}
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+        {showAccessCodeBanner && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }}>
+            <Card className={`mb-6 border-0 shadow-sm ${accessCodeSeverityClass}`}>
+              <CardContent className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 gap-4">
+                <div className="flex items-center gap-3">
+                  <Clock className="w-5 h-5 text-white" />
+                  <div>
+                    <p className="font-medium text-white">
+                      Active Plan Access Window
+                    </p>
+                    <p className="text-sm text-white/85">
+                      Countdown follows your latest issued access code expiry.
+                      {accessCodeExpiryLabel ? ` Expires on ${accessCodeExpiryLabel}.` : ""}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-lg sm:text-xl font-bold text-white bg-white/15 rounded-md px-3 py-2 tracking-wide">
+                  {accessCodeCountdown}
                 </div>
               </CardContent>
             </Card>
