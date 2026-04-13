@@ -7,6 +7,42 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+type FailurePayload = {
+  error: string;
+  code?: string;
+  order_id?: string;
+  paypal_status?: number;
+  paypal_issue?: string;
+  paypal_debug_id?: string;
+  paypal_details?: unknown;
+};
+
+class HttpError extends Error {
+  status: number;
+  payload: FailurePayload;
+
+  constructor(status: number, payload: FailurePayload) {
+    super(payload.error);
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
+const parseJsonSafe = async (response: Response): Promise<Record<string, unknown>> => {
+  try {
+    return (await response.json()) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+};
+
+const extractPayPalIssue = (payload: Record<string, unknown>) => {
+  const details = Array.isArray(payload.details) ? payload.details : [];
+  const firstDetail = details[0] as Record<string, unknown> | undefined;
+  const issue = typeof firstDetail?.issue === "string" ? firstDetail.issue : undefined;
+  return issue;
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -66,9 +102,15 @@ serve(async (req) => {
       },
       body: "grant_type=client_credentials",
     });
-    const authJson = await authRes.json();
+    const authJson = await parseJsonSafe(authRes);
     if (!authRes.ok || !authJson.access_token) {
-      throw new Error(authJson.error_description || "Failed to authenticate with PayPal");
+      throw new HttpError(502, {
+        error: "Failed to authenticate with PayPal",
+        code: "PAYPAL_AUTH_FAILED",
+        paypal_status: authRes.status,
+        paypal_issue: typeof authJson.error === "string" ? authJson.error : undefined,
+        paypal_details: authJson,
+      });
     }
 
     const orderRes = await fetch(`${paypalBase}/v2/checkout/orders/${orderId}`, {
@@ -78,27 +120,64 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
     });
-    const orderJson = await orderRes.json();
+    const orderJson = await parseJsonSafe(orderRes);
     if (!orderRes.ok) {
-      throw new Error(orderJson.message || "Failed to load PayPal order");
+      throw new HttpError(502, {
+        error: "Failed to load PayPal order",
+        code: "PAYPAL_ORDER_LOOKUP_FAILED",
+        order_id: orderId,
+        paypal_status: orderRes.status,
+        paypal_issue: extractPayPalIssue(orderJson),
+        paypal_debug_id:
+          typeof orderJson.debug_id === "string" ? orderJson.debug_id : undefined,
+        paypal_details: orderJson,
+      });
     }
 
-    const customId: string | undefined = orderJson.purchase_units?.[0]?.custom_id;
-    const referenceId: string | undefined = orderJson.purchase_units?.[0]?.reference_id;
+    const customId: string | undefined = (orderJson.purchase_units as Array<Record<string, unknown>> | undefined)?.[0]?.custom_id as string | undefined;
+    const referenceId: string | undefined = (orderJson.purchase_units as Array<Record<string, unknown>> | undefined)?.[0]?.reference_id as string | undefined;
     const [, planKeyFromCustom] = (customId || "").split(":");
     const plan = referenceId || planKeyFromCustom || "growth";
 
-    const captureRes = await fetch(`${paypalBase}/v2/checkout/orders/${orderId}/capture`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${authJson.access_token}`,
-        "Content-Type": "application/json",
-      },
-    });
-    const captureJson = await captureRes.json();
+    let captureJson = orderJson;
+    const orderStatus = typeof orderJson.status === "string" ? orderJson.status : "";
 
-    if (!captureRes.ok) {
-      throw new Error(captureJson.message || "Failed to capture PayPal payment");
+    if (orderStatus === "COMPLETED") {
+      // Order already captured in a prior attempt; continue idempotently.
+      console.info("PayPal order already completed, skipping re-capture", { orderId });
+    } else {
+      if (orderStatus !== "APPROVED") {
+        throw new HttpError(409, {
+          error: "PayPal order is not in APPROVED state for capture",
+          code: "PAYPAL_ORDER_NOT_APPROVED",
+          order_id: orderId,
+          paypal_issue: orderStatus || "UNKNOWN_ORDER_STATUS",
+          paypal_details: orderJson,
+        });
+      }
+
+      const captureRes = await fetch(`${paypalBase}/v2/checkout/orders/${orderId}/capture`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${authJson.access_token as string}`,
+          "Content-Type": "application/json",
+          "PayPal-Request-Id": orderId,
+        },
+      });
+      captureJson = await parseJsonSafe(captureRes);
+
+      if (!captureRes.ok) {
+        throw new HttpError(502, {
+          error: "Failed to capture PayPal payment",
+          code: "PAYPAL_CAPTURE_FAILED",
+          order_id: orderId,
+          paypal_status: captureRes.status,
+          paypal_issue: extractPayPalIssue(captureJson),
+          paypal_debug_id:
+            typeof captureJson.debug_id === "string" ? captureJson.debug_id : undefined,
+          paypal_details: captureJson,
+        });
+      }
     }
 
     const nowIso = new Date().toISOString();
@@ -108,7 +187,10 @@ serve(async (req) => {
       : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     const accessCode = buildAccessCode();
     const captureId =
-      captureJson.purchase_units?.[0]?.payments?.captures?.[0]?.id ?? orderId;
+      (captureJson.purchase_units as Array<Record<string, unknown>> | undefined)?.[0]?.payments &&
+      typeof ((captureJson.purchase_units as Array<Record<string, unknown>> | undefined)?.[0]?.payments as Record<string, unknown>) === "object"
+        ? ((((captureJson.purchase_units as Array<Record<string, unknown>> | undefined)?.[0]?.payments as Record<string, unknown>).captures as Array<Record<string, unknown>> | undefined)?.[0]?.id as string | undefined) ?? orderId
+        : orderId;
 
     const { error: subError } = await supabase
       .from("subscriptions")
@@ -125,34 +207,69 @@ serve(async (req) => {
       throw new Error(`Failed to update subscription: ${subError.message}`);
     }
 
-    const amountValue = Number(captureJson.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.value ?? "0");
-    const currency = captureJson.purchase_units?.[0]?.payments?.captures?.[0]?.amount?.currency_code ?? "USD";
+    const amountValue = Number(
+      ((((captureJson.purchase_units as Array<Record<string, unknown>> | undefined)?.[0]?.payments as Record<string, unknown> | undefined)?.captures as Array<Record<string, unknown>> | undefined)?.[0]?.amount as Record<string, unknown> | undefined)?.value ?? "0"
+    );
+    const currency =
+      ((((captureJson.purchase_units as Array<Record<string, unknown>> | undefined)?.[0]?.payments as Record<string, unknown> | undefined)?.captures as Array<Record<string, unknown>> | undefined)?.[0]?.amount as Record<string, unknown> | undefined)?.currency_code as string | undefined ?? "USD";
+    const invoiceRef = `paypal:${captureId}`;
 
-    const { error: invoiceError } = await supabase.from("invoices").insert({
-      user_id: userData.user.id,
-      amount: amountValue,
-      currency,
-      description: `PayPal payment (${plan})`,
-      invoice_date: nowIso,
-      due_date: nowIso,
-      status: "paid",
-      paid_at: nowIso,
-      stripe_invoice_id: `paypal:${captureId}`,
-    });
-    if (invoiceError) {
-      throw new Error(`Failed to create invoice: ${invoiceError.message}`);
+    const { data: existingInvoice, error: existingInvoiceError } = await supabase
+      .from("invoices")
+      .select("id")
+      .eq("stripe_invoice_id", invoiceRef)
+      .eq("user_id", userData.user.id)
+      .maybeSingle();
+    if (existingInvoiceError) {
+      throw new Error(`Failed to verify existing invoice: ${existingInvoiceError.message}`);
     }
 
-    const { error: codeError } = await supabase.from("client_access_codes").insert({
-      user_id: userData.user.id,
-      code: accessCode,
-      plan,
-      status: "active",
-      issued_at: nowIso,
-      expires_at: periodEndIso,
-    });
-    if (codeError) {
-      throw new Error(`Failed to issue access code: ${codeError.message}`);
+    if (!existingInvoice) {
+      const { error: invoiceError } = await supabase.from("invoices").insert({
+        user_id: userData.user.id,
+        amount: amountValue,
+        currency,
+        description: `PayPal payment (${plan})`,
+        invoice_date: nowIso,
+        due_date: nowIso,
+        status: "paid",
+        paid_at: nowIso,
+        stripe_invoice_id: invoiceRef,
+      });
+      if (invoiceError) {
+        throw new Error(`Failed to create invoice: ${invoiceError.message}`);
+      }
+    }
+
+    const { data: existingCode, error: existingCodeError } = await supabase
+      .from("client_access_codes")
+      .select("code, expires_at")
+      .eq("user_id", userData.user.id)
+      .eq("plan", plan)
+      .eq("status", "active")
+      .gte("expires_at", nowIso)
+      .order("expires_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existingCodeError) {
+      throw new Error(`Failed to verify existing access code: ${existingCodeError.message}`);
+    }
+
+    let finalAccessCode = accessCode;
+    if (existingCode?.code) {
+      finalAccessCode = existingCode.code;
+    } else {
+      const { error: codeError } = await supabase.from("client_access_codes").insert({
+        user_id: userData.user.id,
+        code: accessCode,
+        plan,
+        status: "active",
+        issued_at: nowIso,
+        expires_at: periodEndIso,
+      });
+      if (codeError) {
+        throw new Error(`Failed to issue access code: ${codeError.message}`);
+      }
     }
 
     return new Response(
@@ -162,7 +279,7 @@ serve(async (req) => {
         captureId,
         plan,
         lifetime: isEnterprise,
-        accessCode,
+        accessCode: finalAccessCode,
         accessCodeExpiresAt: periodEndIso,
       }),
       {
@@ -171,6 +288,12 @@ serve(async (req) => {
       }
     );
   } catch (error) {
+    if (error instanceof HttpError) {
+      return new Response(JSON.stringify(error.payload), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: error.status,
+      });
+    }
     const message = error instanceof Error ? error.message : String(error);
     return new Response(JSON.stringify({ error: message }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -25,6 +25,30 @@ import {
   Activity, Shield, Zap, BarChart3, ExternalLink, Download
 } from "lucide-react";
 
+class FunctionCallError extends Error {
+  code?: string;
+  paypalIssue?: string;
+  paypalDebugId?: string;
+  orderId?: string;
+
+  constructor(
+    message: string,
+    details?: {
+      code?: string;
+      paypalIssue?: string;
+      paypalDebugId?: string;
+      orderId?: string;
+    },
+  ) {
+    super(message);
+    this.name = "FunctionCallError";
+    this.code = details?.code;
+    this.paypalIssue = details?.paypalIssue;
+    this.paypalDebugId = details?.paypalDebugId;
+    this.orderId = details?.orderId;
+  }
+}
+
 const Dashboard = () => {
   const { user, session, loading, isAdmin, signOut } = useAuth();
   const navigate = useNavigate();
@@ -104,9 +128,34 @@ const Dashboard = () => {
           status: response.status,
           details,
         });
+        if (typeof details === "object" && details) {
+          const payload = details as {
+            error?: string;
+            code?: string;
+            paypal_issue?: string;
+            paypal_debug_id?: string;
+            order_id?: string;
+          };
+          const baseMessage = payload.error || `Function ${functionName} failed (${response.status})`;
+          const diagnostics = [
+            payload.code ? `code=${payload.code}` : null,
+            payload.paypal_issue ? `issue=${payload.paypal_issue}` : null,
+            payload.paypal_debug_id ? `debug_id=${payload.paypal_debug_id}` : null,
+            payload.order_id ? `order_id=${payload.order_id}` : null,
+          ].filter(Boolean);
+          throw new FunctionCallError(
+            diagnostics.length ? `${baseMessage} [${diagnostics.join(", ")}]` : baseMessage,
+            {
+              code: payload.code,
+              paypalIssue: payload.paypal_issue,
+              paypalDebugId: payload.paypal_debug_id,
+              orderId: payload.order_id,
+            },
+          );
+        }
         throw new Error(
-          typeof details === "object" && details && "error" in (details as any)
-            ? String((details as any).error)
+          typeof details === "string" && details
+            ? details
             : `Function ${functionName} failed (${response.status})`
         );
       }
@@ -724,10 +773,25 @@ const Dashboard = () => {
                                   }}
                                   onApprove={async (data) => {
                                     if (!data.orderID) throw new Error("PayPal order ID missing");
-                                    await handleEmbeddedPayPalCapture(data.orderID);
+                                    try {
+                                      await handleEmbeddedPayPalCapture(data.orderID);
+                                    } catch (err) {
+                                      // Keep this throw so the PayPal SDK can recover where possible.
+                                      throw err;
+                                    }
                                   }}
                                   onError={(err) => {
                                     console.error("[PAYPAL DEBUG] Embedded checkout error", err);
+                                    if (err instanceof FunctionCallError) {
+                                      if (err.code === "PAYPAL_CAPTURE_FAILED" && err.paypalIssue === "INSTRUMENT_DECLINED") {
+                                        toast.error(
+                                          `Card was declined. Ask client to retry with the same card once, then use another card if it fails again. Reference: ${err.paypalDebugId || "n/a"}`
+                                        );
+                                        return;
+                                      }
+                                      toast.error(err.message);
+                                      return;
+                                    }
                                     const msg = typeof err === "object" && err && "message" in err ? String((err as Error).message) : String(err);
                                     if (/popup/i.test(msg) || /blocked/i.test(msg)) {
                                       toast.error(
@@ -738,7 +802,7 @@ const Dashboard = () => {
                                         "PayPal rejected the checkout. In Admin, match Sandbox mode with your PayPal app (Sandbox ID/secret vs Live), then retry. Test checkout in Chrome or Edge, not an embedded preview."
                                       );
                                     } else {
-                                      toast.error("Embedded PayPal card checkout failed.");
+                                      toast.error(msg || "Embedded PayPal card checkout failed.");
                                     }
                                   }}
                                 />
