@@ -698,6 +698,12 @@ const Dashboard = () => {
   const accessCodeExpiryLabel = latestAccessCode?.expires_at
     ? new Date(latestAccessCode.expires_at).toLocaleString()
     : null;
+  const planPurchasesLocked = hasActiveAccessCode;
+  const purchaseLockMessage = isLifetimeCode
+    ? "Lifetime plan is active. Additional purchases are disabled."
+    : accessCodeExpiryLabel
+    ? `Current plan is active until ${accessCodeExpiryLabel}.`
+    : "Current plan is active. Additional purchases are disabled.";
   const accessCodeSeverityClass =
     accessCodeRemainingMs <= 3 * 24 * 60 * 60 * 1000
       ? "bg-gradient-to-r from-[#4a1212] via-[#7a1f1f] to-[#b73232]"
@@ -981,6 +987,7 @@ const Dashboard = () => {
                   .map(([key, plan]) => {
                   const isCurrent = currentPlan === key;
                   const isEnterprise = key === "enterprise";
+                  const isLockedForPurchase = planPurchasesLocked && !isCurrent;
                   const planShadeClass = isCurrent
                     ? "bg-gradient-to-br from-sky-500/40 via-sky-500/30 to-sky-500/20 shadow-lg shadow-sky-500/25"
                     : key === "growth"
@@ -1011,13 +1018,19 @@ const Dashboard = () => {
                           <Button
                             variant={isCurrent ? "outline" : "hero"}
                             size="sm"
-                            className="w-full"
+                            className={`w-full ${
+                              isLockedForPurchase
+                                ? "bg-gradient-to-r from-[#5a1717] via-[#7f1d1d] to-[#991b1b] text-white hover:from-[#5a1717] hover:via-[#7f1d1d] hover:to-[#991b1b]"
+                                : ""
+                            }`}
                             onClick={() => handleStripeCheckout(key)}
-                            disabled={checkingOut === key || isCurrent}
+                            disabled={checkingOut === key || isCurrent || isLockedForPurchase}
                           >
                             <CreditCard className="w-4 h-4 mr-2" />
                             {isCurrent
                               ? "Current"
+                              : isLockedForPurchase
+                              ? "Locked until expiry"
                               : checkingOut === key
                               ? "Loading..."
                               : "Pay One-Time"}
@@ -1028,12 +1041,18 @@ const Dashboard = () => {
                           <Button
                             variant={isCurrent ? "outline" : "hero"}
                             size="sm"
-                            className="w-full rounded-md py-6 px-4 justify-between"
+                            className={`w-full rounded-md py-6 px-4 justify-between ${
+                              isLockedForPurchase
+                                ? "bg-gradient-to-r from-[#5a1717] via-[#7f1d1d] to-[#991b1b] text-white hover:from-[#5a1717] hover:via-[#7f1d1d] hover:to-[#991b1b]"
+                                : ""
+                            }`}
                             onClick={() => handlePaystackCheckout(key)}
-                            disabled={checkingOut === key || isCurrent}
+                            disabled={checkingOut === key || isCurrent || isLockedForPurchase}
                           >
                             {isCurrent
                               ? "Current"
+                              : isLockedForPurchase
+                              ? "Locked until expiry"
                               : checkingOut === key
                               ? "Starting secure checkout..."
                               : "Pay with Debit or Credit Card"}
@@ -1043,7 +1062,9 @@ const Dashboard = () => {
 
                         {activePaymentMethod === "paypal" && !isCurrent && (
                           <div className="w-full rounded-lg p-2 bg-background/70 backdrop-blur-sm">
-                            {!paypalClientId ? (
+                            {isLockedForPurchase ? (
+                              <p className="text-xs text-muted-foreground">{purchaseLockMessage}</p>
+                            ) : !paypalClientId ? (
                               <p className="text-xs text-destructive">PayPal Client ID not configured for embedded checkout.</p>
                             ) : (
                               <PayPalScriptProvider
