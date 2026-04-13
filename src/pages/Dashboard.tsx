@@ -725,7 +725,7 @@ const Dashboard = () => {
               <p className="text-lg font-semibold text-foreground">Finalizing Payment</p>
             </div>
             <p className="text-sm text-muted-foreground mb-4">
-              Processing your PayPal card payment securely. Please do not close this page.
+              Processing your payment securely. Please do not close this page.
             </p>
             <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
               <div className="h-full w-1/3 bg-primary animate-pulse" />
