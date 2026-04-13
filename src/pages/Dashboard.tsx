@@ -376,11 +376,22 @@ const Dashboard = () => {
         authorization_url?: string;
         amount_minor_units?: number;
         charge_currency?: string;
+        key_mode?: "live" | "test";
       }>("create-paystack-checkout", { planKey });
       hostedUrl = data.authorization_url || "";
 
       if (!data?.access_code) {
         throw new Error("Paystack access code not returned.");
+      }
+      if (!/^pk_(test|live)_/i.test(paystackPublicKey)) {
+        toast.error("Paystack public key is invalid. Expected pk_test_* or pk_live_*.");
+        if (hostedUrl) window.open(hostedUrl, "_blank");
+        return;
+      }
+      if (data.key_mode && !paystackPublicKey.toLowerCase().startsWith(`pk_${data.key_mode}_`)) {
+        toast.error(`Paystack key mode mismatch: secret is ${data.key_mode}, but public key is different.`);
+        if (hostedUrl) window.open(hostedUrl, "_blank");
+        return;
       }
 
       await ensurePaystackInlineScript();
