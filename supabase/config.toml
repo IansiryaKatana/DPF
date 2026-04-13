@@ -20,3 +20,9 @@ verify_jwt = false
 
 [functions.validate-access-code]
 verify_jwt = false
+
+[functions.create-paystack-checkout]
+verify_jwt = false
+
+[functions.verify-paystack-payment]
+verify_jwt = false

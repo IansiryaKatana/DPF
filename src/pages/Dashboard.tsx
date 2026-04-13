@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -24,6 +24,45 @@ import {
   CreditCard, Key, FileText, ArrowUpRight, Clock, CheckCircle, AlertTriangle,
   Activity, Shield, Zap, BarChart3, ExternalLink, Download
 } from "lucide-react";
+
+declare global {
+  interface Window {
+    PaystackPop?: {
+      setup: (options: {
+        key: string;
+        email: string;
+        access_code: string;
+        amount?: number;
+        currency?: string;
+        ref?: string;
+        callback: (response: { reference?: string }) => void;
+        onClose?: () => void;
+      }) => { openIframe: () => void };
+    };
+  }
+}
+
+const ensurePaystackInlineScript = async (): Promise<void> => {
+  if (window.PaystackPop) return;
+
+  await new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>('script[src="https://js.paystack.co/v1/inline.js"]');
+    if (existing) {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Failed to load Paystack checkout SDK")), {
+        once: true,
+      });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://js.paystack.co/v1/inline.js";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Paystack checkout SDK"));
+    document.body.appendChild(script);
+  });
+};
 
 class FunctionCallError extends Error {
   code?: string;
@@ -69,6 +108,7 @@ const Dashboard = () => {
   const [paypalClientId, setPaypalClientId] = useState<string>("");
   /** Must match Admin PayPal sandbox toggle for the checkout app credentials. */
   const [paypalSandboxMode, setPaypalSandboxMode] = useState(true);
+  const [paystackPublicKey, setPaystackPublicKey] = useState<string>("");
   const [planPriceOverrides, setPlanPriceOverrides] = useState<Partial<Record<PlanKey, number>>>({});
   const [clientDeliverableZipUrl, setClientDeliverableZipUrl] = useState("");
   const [resolvedDeliverableUrl, setResolvedDeliverableUrl] = useState<string>("");
@@ -78,11 +118,25 @@ const Dashboard = () => {
   const [isProcessingPayPalPayment, setIsProcessingPayPalPayment] = useState(false);
   const [nowMs, setNowMs] = useState<number>(Date.now());
   const [latestAccessCode, setLatestAccessCode] = useState<any | null>(null);
+  const processedPaystackReferences = useRef<Set<string>>(new Set());
 
   const getFreshAccessToken = useCallback(async () => {
     const { data, error } = await supabase.auth.getSession();
     if (error) throw new Error("Authentication session error. Please sign in again.");
-    const token = data.session?.access_token;
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const expiresAt = data.session?.expires_at ?? 0;
+    const tokenNearExpiry = !data.session?.access_token || expiresAt <= nowSeconds + 60;
+
+    let token = data.session?.access_token;
+    if (tokenNearExpiry) {
+      const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) {
+        throw new Error("Session expired. Please sign in again.");
+      }
+      token = refreshed.session?.access_token;
+    }
+
     if (!token) throw new Error("No valid session. Please sign in again.");
     try {
       const payload = JSON.parse(atob(token.split(".")[1] || ""));
@@ -124,9 +178,10 @@ const Dashboard = () => {
       }
 
       if (!response.ok) {
+        const status = response.status;
         console.error("[FUNCTION DEBUG] fetch error", {
           functionName,
-          status: response.status,
+          status,
           details,
         });
         if (typeof details === "object" && details) {
@@ -137,7 +192,7 @@ const Dashboard = () => {
             paypal_debug_id?: string;
             order_id?: string;
           };
-          const baseMessage = payload.error || `Function ${functionName} failed (${response.status})`;
+          const baseMessage = payload.error || `Function ${functionName} failed (${status})`;
           const diagnostics = [
             payload.code ? `code=${payload.code}` : null,
             payload.paypal_issue ? `issue=${payload.paypal_issue}` : null,
@@ -157,7 +212,7 @@ const Dashboard = () => {
         throw new Error(
           typeof details === "string" && details
             ? details
-            : `Function ${functionName} failed (${response.status})`
+            : `Function ${functionName} failed (${status})`
         );
       }
 
@@ -229,6 +284,7 @@ const Dashboard = () => {
             "active_payment_method",
             "paypal_client_id",
             "paypal_sandbox_mode",
+            "paystack_public_key",
             "client_deliverable_zip_url",
             "plan_price_growth",
             "plan_price_pro",
@@ -253,6 +309,8 @@ const Dashboard = () => {
       if (paypalClientIdSetting?.setting_value) setPaypalClientId(paypalClientIdSetting.setting_value.trim());
       const sandboxSetting = settingsRows.find((s: any) => s.setting_key === "paypal_sandbox_mode");
       setPaypalSandboxMode(sandboxSetting?.setting_value !== "false");
+      const paystackPublicKeySetting = settingsRows.find((s: any) => s.setting_key === "paystack_public_key");
+      setPaystackPublicKey((paystackPublicKeySetting?.setting_value || "").trim());
       const deliverableUrl = (settingsRows.find((s: any) => s.setting_key === "client_deliverable_zip_url")?.setting_value || "").trim();
       setClientDeliverableZipUrl(deliverableUrl);
       const toNumberOrNull = (value: string | null | undefined) => {
@@ -297,17 +355,56 @@ const Dashboard = () => {
 
   const handlePaystackCheckout = async (planKey: PlanKey) => {
     setCheckingOut(planKey);
+    let hostedUrl = "";
     try {
       if (!session) throw new Error("Please sign in again.");
-      const data = await callEdgeFunction<{ authorization_url?: string }>("create-paystack-checkout", {
-        planKey,
-      });
-      if (data?.authorization_url) {
-        window.open(data.authorization_url, "_blank");
-      } else {
-        throw new Error("Paystack authorization URL not returned.");
+      if (!paystackPublicKey) throw new Error("Paystack public key is not configured.");
+
+      const data = await callEdgeFunction<{
+        access_code?: string;
+        reference?: string;
+        authorization_url?: string;
+        amount_minor_units?: number;
+        charge_currency?: string;
+      }>("create-paystack-checkout", { planKey });
+      hostedUrl = data.authorization_url || "";
+
+      if (!data?.access_code) {
+        throw new Error("Paystack access code not returned.");
       }
+
+      await ensurePaystackInlineScript();
+      if (!window.PaystackPop) throw new Error("Paystack inline checkout SDK not ready.");
+
+      window.PaystackPop
+        .setup({
+          key: paystackPublicKey,
+          email: profile?.email || user?.email || "",
+          access_code: data.access_code,
+          amount: data.amount_minor_units,
+          currency: data.charge_currency || "KES",
+          ref: data.reference,
+          callback: (response) => {
+            const reference = response?.reference || data.reference;
+            if (!reference) {
+              toast.error("Paystack reference missing after payment.");
+              return;
+            }
+            void handlePaystackVerification(reference);
+          },
+          onClose: () => {
+            toast.info("Paystack payment popup closed.");
+          },
+        })
+        .openIframe();
     } catch (error: any) {
+      if (error?.message?.includes("status code 400")) {
+        toast.error("Inline checkout failed in test mode. Falling back to hosted Paystack checkout.");
+        if (hostedUrl) {
+          window.open(hostedUrl, "_blank");
+          return;
+        }
+      }
       toast.error("Failed to start Paystack checkout: " + (error.message || "Unknown error"));
     } finally {
       setCheckingOut(null);
@@ -449,10 +546,13 @@ const Dashboard = () => {
   useEffect(() => {
     const checkout = searchParams.get("checkout");
     if (checkout !== "paystack-success") return;
-    const reference = searchParams.get("reference");
+    const reference = searchParams.get("reference") || searchParams.get("trxref");
     if (!reference) return;
+    if (processedPaystackReferences.current.has(reference)) return;
+    processedPaystackReferences.current.add(reference);
+    navigate("/dashboard", { replace: true });
     void handlePaystackVerification(reference);
-  }, [searchParams, handlePaystackVerification]);
+  }, [searchParams, handlePaystackVerification, navigate]);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
@@ -825,16 +925,16 @@ const Dashboard = () => {
                           <Button
                             variant={isCurrent ? "outline" : "hero"}
                             size="sm"
-                            className="w-full"
+                            className="w-full rounded-md py-6 px-4 justify-between"
                             onClick={() => handlePaystackCheckout(key)}
                             disabled={checkingOut === key || isCurrent}
                           >
-                            <CreditCard className="w-4 h-4 mr-2" />
                             {isCurrent
                               ? "Current"
                               : checkingOut === key
-                              ? "Loading..."
-                              : "Pay with Paystack"}
+                              ? "Starting secure checkout..."
+                              : "Pay with Debit or Credit Card"}
+                            <CreditCard className="w-4 h-4 ml-2" />
                           </Button>
                         )}
 
@@ -918,7 +1018,7 @@ const Dashboard = () => {
               </div>
 
               <p className="text-xs text-muted-foreground mt-4 text-center">
-                Every plan is one-time PayPal checkout and issues a 30-day access code.
+                Every plan is one-time and issues a 30-day access code.
               </p>
               {functionsErrorMessage && (
                 <p className="text-xs text-destructive mt-2 text-center">{functionsErrorMessage}</p>

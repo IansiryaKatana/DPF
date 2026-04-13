@@ -7,10 +7,29 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const PLAN_PRICES_KES: Record<string, number> = {
+const PLAN_PRICES_USD: Record<string, number> = {
   growth: 500,
-  pro: 1,
+  pro: 700,
   enterprise: 12000,
+};
+
+const getUsdToKesRate = async (): Promise<number> => {
+  const response = await fetch("https://open.er-api.com/v6/latest/USD", {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch FX rate (HTTP ${response.status})`);
+  }
+
+  const json = await response.json();
+  const rate = Number(json?.rates?.KES);
+  if (!Number.isFinite(rate) || rate <= 0) {
+    throw new Error("Invalid USD/KES FX rate response");
+  }
+
+  return rate;
 };
 
 serve(async (req) => {
@@ -33,7 +52,7 @@ serve(async (req) => {
     if (!userData.user?.email) throw new Error("User not authenticated");
 
     const { planKey } = await req.json();
-    if (!planKey || !PLAN_PRICES_KES[planKey]) throw new Error("Invalid plan");
+    if (!planKey || !PLAN_PRICES_USD[planKey]) throw new Error("Invalid plan");
 
     const { data: settings, error: settingsError } = await supabase
       .from("admin_settings")
@@ -54,11 +73,14 @@ serve(async (req) => {
       return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
     };
     const resolvedPlanPrices: Record<string, number> = {
-      growth: parsePlanPrice(settings?.find((s) => s.setting_key === "plan_price_growth")?.setting_value, PLAN_PRICES_KES.growth),
-      pro: parsePlanPrice(settings?.find((s) => s.setting_key === "plan_price_pro")?.setting_value, PLAN_PRICES_KES.pro),
-      enterprise: parsePlanPrice(settings?.find((s) => s.setting_key === "plan_price_enterprise")?.setting_value, PLAN_PRICES_KES.enterprise),
+      growth: parsePlanPrice(settings?.find((s) => s.setting_key === "plan_price_growth")?.setting_value, PLAN_PRICES_USD.growth),
+      pro: parsePlanPrice(settings?.find((s) => s.setting_key === "plan_price_pro")?.setting_value, PLAN_PRICES_USD.pro),
+      enterprise: parsePlanPrice(settings?.find((s) => s.setting_key === "plan_price_enterprise")?.setting_value, PLAN_PRICES_USD.enterprise),
     };
-    const amountInMinorUnits = Math.round(resolvedPlanPrices[planKey] * 100);
+    const planAmountUsd = resolvedPlanPrices[planKey];
+    const usdToKesRate = await getUsdToKesRate();
+    const planAmountKes = Number((planAmountUsd * usdToKesRate).toFixed(2));
+    const amountInMinorUnits = Math.round(planAmountKes * 100);
     const origin = req.headers.get("origin") || "http://localhost:8081";
     const reference = `DPF_${userData.user.id}_${planKey}_${Date.now()}`;
 
@@ -78,6 +100,11 @@ serve(async (req) => {
           userId: userData.user.id,
           planKey,
           platform: "DataPulseFlow",
+          requested_currency: "USD",
+          requested_amount_usd: planAmountUsd,
+          charged_currency: "KES",
+          charged_amount_kes: planAmountKes,
+          usd_to_kes_rate: usdToKesRate,
         },
       }),
     });
@@ -92,6 +119,10 @@ serve(async (req) => {
         authorization_url: initJson.data.authorization_url,
         access_code: initJson.data.access_code,
         reference: initJson.data.reference,
+        amount_minor_units: amountInMinorUnits,
+        charge_currency: "KES",
+        display_currency: "USD",
+        display_amount: planAmountUsd,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

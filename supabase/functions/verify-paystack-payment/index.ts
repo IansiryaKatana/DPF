@@ -106,8 +106,28 @@ serve(async (req) => {
       throw new Error(`Failed to update subscription: ${subError.message}`);
     }
 
-    const amountValue = Number(payment.amount || 0) / 100;
-    const currency = String(payment.currency || "USD").toUpperCase();
+    const paymentCurrency = String(payment.currency || "").toUpperCase();
+    if (paymentCurrency !== "KES") {
+      throw new Error(`Unexpected Paystack currency: ${paymentCurrency || "unknown"}`);
+    }
+
+    const metadata = (payment.metadata && typeof payment.metadata === "object") ? payment.metadata : {};
+    const requestedAmountUsd = Number((metadata as Record<string, unknown>).requested_amount_usd);
+    const requestedCurrency = String((metadata as Record<string, unknown>).requested_currency || "USD").toUpperCase();
+    const chargedAmountKes = Number((metadata as Record<string, unknown>).charged_amount_kes);
+
+    const paidAmountKes = Number(payment.amount || 0) / 100;
+    if (!Number.isFinite(chargedAmountKes) || chargedAmountKes <= 0) {
+      throw new Error("Missing charged KES amount in payment metadata");
+    }
+    if (Math.abs(paidAmountKes - chargedAmountKes) > 0.01) {
+      throw new Error("Verified amount does not match initialized Paystack amount");
+    }
+
+    const amountValue = Number.isFinite(requestedAmountUsd) && requestedAmountUsd > 0
+      ? requestedAmountUsd
+      : paidAmountKes;
+    const currency = requestedCurrency || "USD";
 
     const { error: invoiceError } = await supabase.from("invoices").insert({
       user_id: userData.user.id,
