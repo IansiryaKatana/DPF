@@ -4,9 +4,11 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { sendNotifyEmail } from "@/lib/send-email";
 import { demoApprovedEmail, demoRejectedEmail } from "@/lib/email-templates";
+import { EMAIL_SCENARIOS, EmailScenarioKey, emailScenarioSettingKey } from "@/lib/email-scenarios";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -57,6 +59,13 @@ const Admin = () => {
     pro: "700",
     enterprise: "12000",
   });
+  const [emailScenarioToggles, setEmailScenarioToggles] = useState<Record<EmailScenarioKey, boolean>>({
+    welcome: true,
+    demo_approved: true,
+    demo_rejected: true,
+    invoice_created: true,
+    support_chat_submission: true,
+  });
   const [supportContactEmail, setSupportContactEmail] = useState("support@datapulseflow.com");
   const [resendApiKey, setResendApiKey] = useState("");
 
@@ -98,6 +107,21 @@ const Admin = () => {
           if (s.setting_key === "plan_price_enterprise") setPlanPricing(prev => ({ ...prev, enterprise: s.setting_value || prev.enterprise }));
           if (s.setting_key === "support_contact_email") setSupportContactEmail(s.setting_value || "support@datapulseflow.com");
           if (s.setting_key === "resend_api_key") setResendApiKey(s.setting_value || "");
+          if (s.setting_key === emailScenarioSettingKey("welcome")) {
+            setEmailScenarioToggles(prev => ({ ...prev, welcome: s.setting_value !== "false" }));
+          }
+          if (s.setting_key === emailScenarioSettingKey("demo_approved")) {
+            setEmailScenarioToggles(prev => ({ ...prev, demo_approved: s.setting_value !== "false" }));
+          }
+          if (s.setting_key === emailScenarioSettingKey("demo_rejected")) {
+            setEmailScenarioToggles(prev => ({ ...prev, demo_rejected: s.setting_value !== "false" }));
+          }
+          if (s.setting_key === emailScenarioSettingKey("invoice_created")) {
+            setEmailScenarioToggles(prev => ({ ...prev, invoice_created: s.setting_value !== "false" }));
+          }
+          if (s.setting_key === emailScenarioSettingKey("support_chat_submission")) {
+            setEmailScenarioToggles(prev => ({ ...prev, support_chat_submission: s.setting_value !== "false" }));
+          }
         });
       }
 
@@ -216,6 +240,17 @@ const Admin = () => {
       toast.error("Failed to save support settings: " + (error.message || "Unknown error"));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleScenarioToggle = async (scenarioKey: EmailScenarioKey, enabled: boolean) => {
+    setEmailScenarioToggles(prev => ({ ...prev, [scenarioKey]: enabled }));
+    try {
+      await saveSetting(emailScenarioSettingKey(scenarioKey), String(enabled), false);
+      toast.success(`${enabled ? "Enabled" : "Disabled"}: ${EMAIL_SCENARIOS.find((s) => s.key === scenarioKey)?.label || scenarioKey}`);
+    } catch (error: any) {
+      setEmailScenarioToggles(prev => ({ ...prev, [scenarioKey]: !enabled }));
+      toast.error("Failed to update email scenario toggle: " + (error.message || "Unknown error"));
     }
   };
 
@@ -731,7 +766,9 @@ const Admin = () => {
                                     name: req.full_name,
                                     loginUrl: `${window.location.origin}/login`,
                                   });
-                                  sendNotifyEmail({ to: req.email, ...email, templateName: "demo-approved" }).catch(() => {});
+                                  if (emailScenarioToggles.demo_approved) {
+                                    sendNotifyEmail({ to: req.email, ...email, templateName: "demo-approved" }).catch(() => {});
+                                  }
                                 }
                               }}
                             >
@@ -754,7 +791,9 @@ const Admin = () => {
                                   );
                                   // Send rejection email
                                   const email = demoRejectedEmail({ name: req.full_name });
-                                  sendNotifyEmail({ to: req.email, ...email, templateName: "demo-rejected" }).catch(() => {});
+                                  if (emailScenarioToggles.demo_rejected) {
+                                    sendNotifyEmail({ to: req.email, ...email, templateName: "demo-rejected" }).catch(() => {});
+                                  }
                                 }
                               }}
                             >
@@ -809,6 +848,31 @@ const Admin = () => {
                         <div className={`w-2 h-2 rounded-full ${paystack.secretKey ? "bg-green-500" : "bg-muted-foreground"}`} />
                         <span className="text-sm text-muted-foreground">Paystack: {paystack.secretKey ? "Connected" : "Not configured"}</span>
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-border p-4">
+                    <h3 className="font-medium text-foreground mb-1">Automated Email Templates</h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Toggle automatic email delivery by scenario. Templates remain standard and branded.
+                    </p>
+                    <div className="space-y-3">
+                      {EMAIL_SCENARIOS.map((scenario) => (
+                        <div key={scenario.key} className="flex items-start justify-between gap-3 rounded-md border border-border/70 p-3">
+                          <div>
+                            <p className="text-sm font-medium text-foreground">{scenario.label}</p>
+                            <p className="text-xs text-muted-foreground">{scenario.description}</p>
+                            <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                              Template: {scenario.templateName}
+                            </p>
+                          </div>
+                          <Switch
+                            checked={emailScenarioToggles[scenario.key]}
+                            onCheckedChange={(checked) => handleScenarioToggle(scenario.key, checked)}
+                            aria-label={`Toggle ${scenario.label}`}
+                          />
+                        </div>
+                      ))}
                     </div>
                   </div>
 

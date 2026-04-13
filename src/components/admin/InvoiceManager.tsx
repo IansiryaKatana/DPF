@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { sendNotifyEmail } from "@/lib/send-email";
 import { invoiceEmail } from "@/lib/email-templates";
+import { isEmailScenarioEnabled } from "@/lib/email-scenarios";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -186,7 +187,7 @@ const InvoiceManager = () => {
       // Send email notification for new invoices
       if (!editingId && invoiceId) {
         const client = clients.find(c => c.user_id === form.user_id);
-        if (client?.email) {
+        if (client?.email && (await isEmailScenarioEnabled("invoice_created"))) {
           const invoiceUrl = `${window.location.origin}/invoice/${invoiceId}`;
           const email = invoiceEmail({
             clientName: client.full_name || "Valued Client",

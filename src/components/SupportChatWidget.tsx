@@ -3,6 +3,7 @@ import { CheckCircle2, MessageCircle, Send, X } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { sendNotifyEmail } from "@/lib/send-email";
+import { isEmailScenarioEnabled } from "@/lib/email-scenarios";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -62,6 +63,11 @@ const SupportChatWidget = () => {
 
     setLoading(true);
     try {
+      if (!(await isEmailScenarioEnabled("support_chat_submission"))) {
+        toast.info("Support email is temporarily paused. Please try again later.");
+        return;
+      }
+
       const cleanEmail = email.trim().toLowerCase();
       const cleanQuestion = question.trim();
       const timestamp = new Date().toISOString();

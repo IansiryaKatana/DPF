@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { sendHelloEmail } from "@/lib/send-email";
 import { welcomeEmail } from "@/lib/email-templates";
+import { isEmailScenarioEnabled } from "@/lib/email-scenarios";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,7 +46,7 @@ const Register = () => {
 
       // Welcome email requires a session JWT for the send-email Edge Function (verify_jwt).
       // When email confirmation is on, signUp returns no session — skip here to avoid 401; use an Auth Hook if you need a welcome email before first login.
-      if (signUpData.session) {
+      if (signUpData.session && (await isEmailScenarioEnabled("welcome"))) {
         const email = welcomeEmail({
           name: form.fullName,
           loginUrl: `${window.location.origin}/login`,
