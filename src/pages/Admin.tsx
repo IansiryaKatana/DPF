@@ -41,6 +41,10 @@ const Admin = () => {
     clientSecret: "",
     sandboxMode: true,
   });
+  const [paystack, setPaystack] = useState({
+    publicKey: "",
+    secretKey: "",
+  });
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [uploadingDeliverable, setUploadingDeliverable] = useState(false);
@@ -48,6 +52,11 @@ const Admin = () => {
   const [clients, setClients] = useState<any[]>([]);
   const [activePaymentMethod, setActivePaymentMethod] = useState<string>("stripe");
   const [clientDeliverableZipUrl, setClientDeliverableZipUrl] = useState("");
+  const [planPricing, setPlanPricing] = useState({
+    growth: "500",
+    pro: "700",
+    enterprise: "12000",
+  });
 
   const buildAccessCode = () => {
     const charset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -79,7 +88,12 @@ const Admin = () => {
           if (s.setting_key === "paypal_client_id") setPaypal(prev => ({ ...prev, clientId: s.setting_value || "" }));
           if (s.setting_key === "paypal_client_secret") setPaypal(prev => ({ ...prev, clientSecret: s.setting_value || "" }));
           if (s.setting_key === "paypal_sandbox_mode") setPaypal(prev => ({ ...prev, sandboxMode: s.setting_value === "true" }));
+          if (s.setting_key === "paystack_public_key") setPaystack(prev => ({ ...prev, publicKey: s.setting_value || "" }));
+          if (s.setting_key === "paystack_secret_key") setPaystack(prev => ({ ...prev, secretKey: s.setting_value || "" }));
           if (s.setting_key === "client_deliverable_zip_url") setClientDeliverableZipUrl(s.setting_value || "");
+          if (s.setting_key === "plan_price_growth") setPlanPricing(prev => ({ ...prev, growth: s.setting_value || prev.growth }));
+          if (s.setting_key === "plan_price_pro") setPlanPricing(prev => ({ ...prev, pro: s.setting_value || prev.pro }));
+          if (s.setting_key === "plan_price_enterprise") setPlanPricing(prev => ({ ...prev, enterprise: s.setting_value || prev.enterprise }));
         });
       }
 
@@ -132,12 +146,17 @@ const Admin = () => {
       if (provider === "stripe") {
         await saveSetting("stripe_publishable_key", stripe.publishableKey, false);
         await saveSetting("stripe_secret_key", stripe.secretKey);
-      } else {
+      } else if (provider === "paypal") {
         await saveSetting("paypal_client_id", paypal.clientId, false);
         await saveSetting("paypal_client_secret", paypal.clientSecret);
         await saveSetting("paypal_sandbox_mode", String(paypal.sandboxMode), false);
+      } else {
+        await saveSetting("paystack_public_key", paystack.publicKey, false);
+        await saveSetting("paystack_secret_key", paystack.secretKey);
       }
-      toast.success(`${provider === "stripe" ? "Stripe" : "PayPal"} credentials saved successfully!`);
+      toast.success(
+        `${provider === "stripe" ? "Stripe" : provider === "paypal" ? "PayPal" : "Paystack"} credentials saved successfully!`
+      );
     } catch (error: any) {
       toast.error("Failed to save: " + (error.message || "Unknown error"));
     } finally {
@@ -146,6 +165,31 @@ const Admin = () => {
   };
 
   const toggleSecret = (key: string) => setShowSecrets(prev => ({ ...prev, [key]: !prev[key] }));
+
+  const handleSavePlanPricing = async () => {
+    setSaving(true);
+    try {
+      const entries = [
+        ["plan_price_growth", planPricing.growth],
+        ["plan_price_pro", planPricing.pro],
+        ["plan_price_enterprise", planPricing.enterprise],
+      ] as const;
+
+      for (const [settingKey, settingValue] of entries) {
+        const normalized = Number(settingValue);
+        if (!Number.isFinite(normalized) || normalized <= 0) {
+          throw new Error(`Invalid value for ${settingKey}. Enter a number greater than 0.`);
+        }
+        await saveSetting(settingKey, String(normalized), false);
+      }
+
+      toast.success("Plan pricing saved successfully.");
+    } catch (error: any) {
+      toast.error("Failed to save plan pricing: " + (error.message || "Unknown error"));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const issueRenewalCode = async (client: any) => {
     const code = buildAccessCode();
@@ -291,7 +335,7 @@ const Admin = () => {
                 </CardHeader>
                 <CardContent>
                   <div className="flex flex-wrap gap-3">
-                    {["stripe", "paypal"].map((method) => (
+                    {["stripe", "paypal", "paystack"].map((method) => (
                       <Button
                         key={method}
                         variant={activePaymentMethod === method ? "default" : "outline"}
@@ -407,6 +451,96 @@ const Admin = () => {
                   <Button onClick={() => handleSavePayment("paypal")} disabled={saving}>
                     <Save className="w-4 h-4 mr-2" />
                     {saving ? "Saving..." : "Save PayPal Credentials"}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {/* Paystack */}
+              <Card className="mt-6">
+                <CardHeader>
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-[hsl(145,80%,95%)]">
+                      <Shield className="w-5 h-5 text-[hsl(145,70%,35%)]" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-xl">Paystack Integration</CardTitle>
+                      <CardDescription>Connect your Paystack account for card payments</CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Public Key</Label>
+                    <Input
+                      value={paystack.publicKey}
+                      onChange={(e) => setPaystack({ ...paystack, publicKey: e.target.value })}
+                      placeholder="pk_live_..."
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Secret Key</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        type={showSecrets.paystackSecret ? "text" : "password"}
+                        value={paystack.secretKey}
+                        onChange={(e) => setPaystack({ ...paystack, secretKey: e.target.value })}
+                        placeholder="sk_live_..."
+                      />
+                      <Button variant="ghost" size="icon" onClick={() => toggleSecret("paystackSecret")}>
+                        {showSecrets.paystackSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                  <Button onClick={() => handleSavePayment("paystack")} disabled={saving}>
+                    <Save className="w-4 h-4 mr-2" />
+                    {saving ? "Saving..." : "Save Paystack Credentials"}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card className="mt-6">
+                <CardHeader>
+                  <CardTitle className="text-xl">Plan Pricing</CardTitle>
+                  <CardDescription>
+                    Update client-visible plan amounts used by PayPal and Paystack checkout flows.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label>Growth (USD)</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        step="0.01"
+                        value={planPricing.growth}
+                        onChange={(e) => setPlanPricing(prev => ({ ...prev, growth: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Pro (USD)</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        step="0.01"
+                        value={planPricing.pro}
+                        onChange={(e) => setPlanPricing(prev => ({ ...prev, pro: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Enterprise (USD)</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        step="0.01"
+                        value={planPricing.enterprise}
+                        onChange={(e) => setPlanPricing(prev => ({ ...prev, enterprise: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  <Button onClick={handleSavePlanPricing} disabled={saving}>
+                    <Save className="w-4 h-4 mr-2" />
+                    {saving ? "Saving..." : "Save Plan Pricing"}
                   </Button>
                 </CardContent>
               </Card>
@@ -642,6 +776,10 @@ const Admin = () => {
                       <div className="flex items-center gap-2">
                         <div className={`w-2 h-2 rounded-full ${paypal.clientId ? "bg-green-500" : "bg-muted-foreground"}`} />
                         <span className="text-sm text-muted-foreground">PayPal: {paypal.clientId ? "Connected" : "Not configured"}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${paystack.secretKey ? "bg-green-500" : "bg-muted-foreground"}`} />
+                        <span className="text-sm text-muted-foreground">Paystack: {paystack.secretKey ? "Connected" : "Not configured"}</span>
                       </div>
                     </div>
                   </div>

@@ -69,6 +69,7 @@ const Dashboard = () => {
   const [paypalClientId, setPaypalClientId] = useState<string>("");
   /** Must match Admin PayPal sandbox toggle for the checkout app credentials. */
   const [paypalSandboxMode, setPaypalSandboxMode] = useState(true);
+  const [planPriceOverrides, setPlanPriceOverrides] = useState<Partial<Record<PlanKey, number>>>({});
   const [clientDeliverableZipUrl, setClientDeliverableZipUrl] = useState("");
   const [resolvedDeliverableUrl, setResolvedDeliverableUrl] = useState<string>("");
   const [resolvingDeliverable, setResolvingDeliverable] = useState(false);
@@ -229,6 +230,9 @@ const Dashboard = () => {
             "paypal_client_id",
             "paypal_sandbox_mode",
             "client_deliverable_zip_url",
+            "plan_price_growth",
+            "plan_price_pro",
+            "plan_price_enterprise",
           ]),
         supabase
           .from("client_access_codes")
@@ -251,6 +255,18 @@ const Dashboard = () => {
       setPaypalSandboxMode(sandboxSetting?.setting_value !== "false");
       const deliverableUrl = (settingsRows.find((s: any) => s.setting_key === "client_deliverable_zip_url")?.setting_value || "").trim();
       setClientDeliverableZipUrl(deliverableUrl);
+      const toNumberOrNull = (value: string | null | undefined) => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+      };
+      const growthPrice = toNumberOrNull(settingsRows.find((s: any) => s.setting_key === "plan_price_growth")?.setting_value);
+      const proPrice = toNumberOrNull(settingsRows.find((s: any) => s.setting_key === "plan_price_pro")?.setting_value);
+      const enterprisePrice = toNumberOrNull(settingsRows.find((s: any) => s.setting_key === "plan_price_enterprise")?.setting_value);
+      setPlanPriceOverrides({
+        growth: growthPrice ?? undefined,
+        pro: proPrice ?? undefined,
+        enterprise: enterprisePrice ?? undefined,
+      });
       setLatestAccessCode(codeRes.data || null);
     };
     fetchData();
@@ -274,6 +290,25 @@ const Dashboard = () => {
       }
     } catch (error: any) {
       toast.error("Failed to start checkout: " + (error.message || "Unknown error"));
+    } finally {
+      setCheckingOut(null);
+    }
+  };
+
+  const handlePaystackCheckout = async (planKey: PlanKey) => {
+    setCheckingOut(planKey);
+    try {
+      if (!session) throw new Error("Please sign in again.");
+      const data = await callEdgeFunction<{ authorization_url?: string }>("create-paystack-checkout", {
+        planKey,
+      });
+      if (data?.authorization_url) {
+        window.open(data.authorization_url, "_blank");
+      } else {
+        throw new Error("Paystack authorization URL not returned.");
+      }
+    } catch (error: any) {
+      toast.error("Failed to start Paystack checkout: " + (error.message || "Unknown error"));
     } finally {
       setCheckingOut(null);
     }
@@ -366,6 +401,43 @@ const Dashboard = () => {
     }
   }, [user?.id, session, callEdgeFunction]);
 
+  const handlePaystackVerification = useCallback(async (reference: string) => {
+    try {
+      if (!session) throw new Error("Please sign in again.");
+      setIsProcessingPayPalPayment(true);
+      const data = await callEdgeFunction<{ status?: string; accessCode?: string }>(
+        "verify-paystack-payment",
+        { reference },
+      );
+      if (data?.status === "COMPLETED") {
+        toast.success("Paystack payment completed successfully.");
+        if (data?.accessCode) {
+          toast.success(`New 30-day access code issued: ${data.accessCode}`);
+        }
+        const [{ data: subData }, { data: invData }] = await Promise.all([
+          supabase.from("subscriptions").select("*").eq("user_id", user?.id ?? "").maybeSingle(),
+          supabase.from("invoices").select("*").eq("user_id", user?.id ?? "").order("invoice_date", { ascending: false }),
+        ]);
+        const { data: codeData } = await supabase
+          .from("client_access_codes")
+          .select("*")
+          .eq("user_id", user?.id ?? "")
+          .order("expires_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (subData) setSubscription(subData);
+        setInvoices(invData || []);
+        setLatestAccessCode(codeData || null);
+      } else {
+        toast.info("Paystack payment is pending verification.");
+      }
+    } catch (error: any) {
+      toast.error("Failed to verify Paystack payment: " + (error.message || "Unknown error"));
+    } finally {
+      setIsProcessingPayPalPayment(false);
+    }
+  }, [user?.id, session, callEdgeFunction]);
+
   useEffect(() => {
     const checkout = searchParams.get("checkout");
     if (checkout !== "paypal-success") return;
@@ -373,6 +445,14 @@ const Dashboard = () => {
     if (!orderId) return;
     void handlePayPalCapture(orderId);
   }, [searchParams, handlePayPalCapture]);
+
+  useEffect(() => {
+    const checkout = searchParams.get("checkout");
+    if (checkout !== "paystack-success") return;
+    const reference = searchParams.get("reference");
+    if (!reference) return;
+    void handlePaystackVerification(reference);
+  }, [searchParams, handlePaystackVerification]);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
@@ -622,7 +702,11 @@ const Dashboard = () => {
                 <CardTitle className="text-xl">Subscription & Payments</CardTitle>
               </div>
               <CardDescription>
-                {activePaymentMethod === "stripe" ? "Pay securely with card" : "Pay securely with PayPal"}
+                {activePaymentMethod === "stripe"
+                  ? "Pay securely with Stripe"
+                  : activePaymentMethod === "paypal"
+                  ? "Pay securely with PayPal"
+                  : "Pay securely with Paystack"}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -657,7 +741,7 @@ const Dashboard = () => {
                           </p>
                         )}
                         <p className="text-sm text-muted-foreground">
-                          Payment method: {activePaymentMethod === "stripe" ? "Card (Stripe)" : "Card (PayPal)"}
+                          Payment method: {activePaymentMethod === "stripe" ? "Card (Stripe)" : activePaymentMethod === "paypal" ? "Card (PayPal)" : "Card (Paystack)"}
                         </p>
                       </div>
                     </div>
@@ -712,7 +796,7 @@ const Dashboard = () => {
                         )}
                         <h4 className="text-lg font-semibold text-foreground">{plan.name}</h4>
                         <p className="text-2xl font-bold text-foreground mt-1">
-                          ${plan.price.toLocaleString()}
+                          ${(planPriceOverrides[key] ?? plan.price).toLocaleString()}
                           <span className="text-sm font-normal text-muted-foreground">
                             {isEnterprise ? " one-time" : "/mo"}
                           </span>
@@ -734,6 +818,23 @@ const Dashboard = () => {
                               : checkingOut === key
                               ? "Loading..."
                               : "Pay One-Time"}
+                          </Button>
+                        )}
+
+                        {activePaymentMethod === "paystack" && (
+                          <Button
+                            variant={isCurrent ? "outline" : "hero"}
+                            size="sm"
+                            className="w-full"
+                            onClick={() => handlePaystackCheckout(key)}
+                            disabled={checkingOut === key || isCurrent}
+                          >
+                            <CreditCard className="w-4 h-4 mr-2" />
+                            {isCurrent
+                              ? "Current"
+                              : checkingOut === key
+                              ? "Loading..."
+                              : "Pay with Paystack"}
                           </Button>
                         )}
 

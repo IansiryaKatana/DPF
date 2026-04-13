@@ -1,7 +1,9 @@
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { ArrowUpRight, Check } from "lucide-react";
 import { Link } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
 
 const plans = [
   {
@@ -61,6 +63,36 @@ const plans = [
 ];
 
 const PricingSection = () => {
+  const [planPriceOverrides, setPlanPriceOverrides] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    const loadPlanPrices = async () => {
+      const { data, error } = await supabase
+        .from("admin_settings")
+        .select("setting_key, setting_value")
+        .in("setting_key", ["plan_price_growth", "plan_price_pro", "plan_price_enterprise"]);
+
+      if (error || !data) return;
+
+      const parsePrice = (value: string | null | undefined) => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+      };
+
+      const growth = parsePrice(data.find((s) => s.setting_key === "plan_price_growth")?.setting_value);
+      const pro = parsePrice(data.find((s) => s.setting_key === "plan_price_pro")?.setting_value);
+      const enterprise = parsePrice(data.find((s) => s.setting_key === "plan_price_enterprise")?.setting_value);
+
+      setPlanPriceOverrides({
+        ...(growth ? { growth } : {}),
+        ...(pro ? { pro } : {}),
+        ...(enterprise ? { enterprise } : {}),
+      });
+    };
+
+    void loadPlanPrices();
+  }, []);
+
   return (
     <section className="py-16 md:py-20 px-4 md:px-6 w-full" id="pricing">
       <div className="w-full max-w-[1600px] mx-auto">
@@ -102,7 +134,13 @@ const PricingSection = () => {
                 )}
                 <h3 className="text-xl md:text-2xl font-serif-display mb-2">{plan.name}</h3>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-3xl md:text-4xl font-serif-display">{plan.price}</span>
+                  <span className="text-3xl md:text-4xl font-serif-display">
+                    {(() => {
+                      const overridePrice = planPriceOverrides[plan.planKey];
+                      if (!overridePrice) return plan.price;
+                      return `$${overridePrice.toLocaleString()}`;
+                    })()}
+                  </span>
                   <span className={`text-sm ${plan.highlighted ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
                     {plan.period}
                   </span>

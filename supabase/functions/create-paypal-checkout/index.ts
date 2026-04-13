@@ -13,6 +13,11 @@ const PLAN_PRICES: Record<string, number> = {
   enterprise: 12000,
 };
 
+const parsePlanPrice = (value: string | null | undefined, fallback: number): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -48,7 +53,14 @@ serve(async (req) => {
     const { data: settings, error: settingsError } = await supabase
       .from("admin_settings")
       .select("setting_key, setting_value")
-      .in("setting_key", ["paypal_client_id", "paypal_client_secret", "paypal_sandbox_mode"]);
+      .in("setting_key", [
+        "paypal_client_id",
+        "paypal_client_secret",
+        "paypal_sandbox_mode",
+        "plan_price_growth",
+        "plan_price_pro",
+        "plan_price_enterprise",
+      ]);
 
     if (settingsError) throw new Error(`Failed to load PayPal settings: ${settingsError.message}`);
 
@@ -58,6 +70,11 @@ serve(async (req) => {
     const clientId = getSetting("paypal_client_id");
     const clientSecret = getSetting("paypal_client_secret");
     const sandboxMode = getSetting("paypal_sandbox_mode") !== "false";
+    const resolvedPlanPrices = {
+      growth: parsePlanPrice(getSetting("plan_price_growth"), PLAN_PRICES.growth),
+      pro: parsePlanPrice(getSetting("plan_price_pro"), PLAN_PRICES.pro),
+      enterprise: parsePlanPrice(getSetting("plan_price_enterprise"), PLAN_PRICES.enterprise),
+    };
 
     if (!clientId || !clientSecret) {
       throw new Error("PayPal credentials are missing in admin settings");
@@ -85,7 +102,7 @@ serve(async (req) => {
       throw new Error(`${paypalMsg} ${envHint}`);
     }
 
-    const amount = PLAN_PRICES[planKey].toFixed(2);
+    const amount = resolvedPlanPrices[planKey as keyof typeof resolvedPlanPrices].toFixed(2);
     const origin = req.headers.get("origin") || "http://localhost:8081";
 
     const orderRes = await fetch(`${paypalBase}/v2/checkout/orders`, {
