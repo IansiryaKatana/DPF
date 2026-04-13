@@ -57,6 +57,8 @@ const Admin = () => {
     pro: "700",
     enterprise: "12000",
   });
+  const [supportContactEmail, setSupportContactEmail] = useState("support@datapulseflow.com");
+  const [resendApiKey, setResendApiKey] = useState("");
 
   const buildAccessCode = () => {
     const charset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -94,6 +96,8 @@ const Admin = () => {
           if (s.setting_key === "plan_price_growth") setPlanPricing(prev => ({ ...prev, growth: s.setting_value || prev.growth }));
           if (s.setting_key === "plan_price_pro") setPlanPricing(prev => ({ ...prev, pro: s.setting_value || prev.pro }));
           if (s.setting_key === "plan_price_enterprise") setPlanPricing(prev => ({ ...prev, enterprise: s.setting_value || prev.enterprise }));
+          if (s.setting_key === "support_contact_email") setSupportContactEmail(s.setting_value || "support@datapulseflow.com");
+          if (s.setting_key === "resend_api_key") setResendApiKey(s.setting_value || "");
         });
       }
 
@@ -186,6 +190,30 @@ const Admin = () => {
       toast.success("Plan pricing saved successfully.");
     } catch (error: any) {
       toast.error("Failed to save plan pricing: " + (error.message || "Unknown error"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveSupportSettings = async () => {
+    setSaving(true);
+    try {
+      const normalizedSupportEmail = supportContactEmail.trim().toLowerCase();
+      const normalizedResendKey = resendApiKey.trim();
+
+      if (!normalizedSupportEmail || !normalizedSupportEmail.includes("@")) {
+        throw new Error("Enter a valid support email address.");
+      }
+
+      await saveSetting("support_contact_email", normalizedSupportEmail, false);
+
+      if (normalizedResendKey) {
+        await saveSetting("resend_api_key", normalizedResendKey, true);
+      }
+
+      toast.success("Support email settings saved successfully.");
+    } catch (error: any) {
+      toast.error("Failed to save support settings: " + (error.message || "Unknown error"));
     } finally {
       setSaving(false);
     }
@@ -781,6 +809,42 @@ const Admin = () => {
                         <div className={`w-2 h-2 rounded-full ${paystack.secretKey ? "bg-green-500" : "bg-muted-foreground"}`} />
                         <span className="text-sm text-muted-foreground">Paystack: {paystack.secretKey ? "Connected" : "Not configured"}</span>
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-border p-4">
+                    <h3 className="font-medium text-foreground mb-1">Support Chat Email Setup</h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Configure where floating chat messages are delivered and optionally store your Resend API key fallback.
+                    </p>
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label>Support inbox email</Label>
+                        <Input
+                          type="email"
+                          value={supportContactEmail}
+                          onChange={(e) => setSupportContactEmail(e.target.value)}
+                          placeholder="support@yourdomain.com"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Resend API key (fallback)</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            type={showSecrets.resendApi ? "text" : "password"}
+                            value={resendApiKey}
+                            onChange={(e) => setResendApiKey(e.target.value)}
+                            placeholder="re_..."
+                          />
+                          <Button type="button" variant="ghost" size="icon" onClick={() => toggleSecret("resendApi")}>
+                            {showSecrets.resendApi ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </Button>
+                        </div>
+                      </div>
+                      <Button type="button" onClick={handleSaveSupportSettings} disabled={saving}>
+                        <Save className="w-4 h-4 mr-2" />
+                        {saving ? "Saving..." : "Save Support Email Settings"}
+                      </Button>
                     </div>
                   </div>
                 </div>

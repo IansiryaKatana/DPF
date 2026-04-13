@@ -16,6 +16,7 @@ import InvoiceView from "./pages/InvoiceView.tsx";
 import PrivacyPolicy from "./pages/PrivacyPolicy.tsx";
 import TermsOfService from "./pages/TermsOfService.tsx";
 import CookieConsentBanner from "./components/CookieConsentBanner.tsx";
+import SupportChatWidget from "./components/SupportChatWidget.tsx";
 
 const queryClient = new QueryClient();
 
@@ -52,6 +53,7 @@ const App = () => (
             <Route path="*" element={<NotFound />} />
           </Routes>
           <CookieConsentBanner />
+          <SupportChatWidget />
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

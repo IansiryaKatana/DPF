@@ -22,8 +22,22 @@ serve(async (req) => {
   }
 
   try {
-    const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
-    if (!RESEND_API_KEY) {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    let resendApiKey = Deno.env.get('RESEND_API_KEY')?.trim() || '';
+
+    if (!resendApiKey) {
+      const { data: resendSetting } = await supabase
+        .from('admin_settings')
+        .select('setting_value')
+        .eq('setting_key', 'resend_api_key')
+        .maybeSingle();
+      resendApiKey = resendSetting?.setting_value?.trim() || '';
+    }
+
+    if (!resendApiKey) {
       throw new Error('RESEND_API_KEY is not configured');
     }
 
@@ -42,7 +56,7 @@ serve(async (req) => {
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
+        'Authorization': `Bearer ${resendApiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -58,10 +72,6 @@ serve(async (req) => {
 
     // Log the email send attempt
     try {
-      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-      const supabase = createClient(supabaseUrl, supabaseKey);
-
       for (const recipient of recipients) {
         await supabase.from('email_send_log').insert({
           recipient_email: recipient,
