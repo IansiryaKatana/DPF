@@ -26,3 +26,6 @@ verify_jwt = false
 
 [functions.verify-paystack-payment]
 verify_jwt = false
+
+[functions.send-email]
+verify_jwt = false
