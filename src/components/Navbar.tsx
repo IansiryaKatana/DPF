@@ -28,7 +28,7 @@ const Navbar = () => {
         </div>
 
         <div className="hidden md:flex items-center gap-2">
-          <Button variant="outline" size="sm" className="border-0 bg-[#513885] text-white hover:bg-[#513885]/90 hover:text-white" asChild>
+          <Button variant="outline" size="sm" className="border-0 bg-hero-bg text-foreground hover:bg-hero-bg/90 hover:text-foreground" asChild>
             <Link to="/real-estate">
               Real Estate Suite
               <ArrowUpRight className="w-4 h-4" />
