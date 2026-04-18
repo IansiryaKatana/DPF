@@ -28,7 +28,6 @@ const Login = () => {
       const { data, error } = signInResult;
       if (error) throw error;
 
-      // Keep post-login flow simple to avoid lock contention chains.
       if (data.user) navigate("/dashboard");
     } catch (error: any) {
       toast.error(error.message || "Login failed");
@@ -87,7 +86,9 @@ const Login = () => {
             </Button>
             <p className="text-center text-sm text-muted-foreground">
               Don't have an account?{" "}
-              <Link to="/register" className="text-primary hover:underline">Start free trial</Link>
+              <Link to="/register" className="text-primary hover:underline">
+                Start free trial
+              </Link>
             </p>
           </form>
         </CardContent>

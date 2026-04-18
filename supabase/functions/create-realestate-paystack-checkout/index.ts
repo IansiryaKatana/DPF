@@ -8,9 +8,9 @@ const corsHeaders = {
 };
 
 const PLAN_PRICES_USD: Record<string, number> = {
-  growth: 500,
-  pro: 700,
-  enterprise: 12000,
+  growth: 499,
+  pro: 4790,
+  enterprise: 14000,
 };
 
 const getUsdToKesRate = async (fallbackRate: number | null): Promise<{ rate: number; source: string }> => {
@@ -69,9 +69,9 @@ serve(async (req) => {
         "paystack_secret_key",
         "paystack_charge_currency",
         "usd_kes_rate",
-        "plan_price_growth",
-        "plan_price_pro",
-        "plan_price_enterprise",
+        "realestate_plan_price_growth",
+        "realestate_plan_price_pro",
+        "realestate_plan_price_enterprise",
       ]);
 
     if (settingsError) throw new Error(`Failed to load Paystack settings: ${settingsError.message}`);
@@ -88,9 +88,9 @@ serve(async (req) => {
       return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
     };
     const resolvedPlanPrices: Record<string, number> = {
-      growth: parsePlanPrice(settings?.find((s) => s.setting_key === "plan_price_growth")?.setting_value, PLAN_PRICES_USD.growth),
-      pro: parsePlanPrice(settings?.find((s) => s.setting_key === "plan_price_pro")?.setting_value, PLAN_PRICES_USD.pro),
-      enterprise: parsePlanPrice(settings?.find((s) => s.setting_key === "plan_price_enterprise")?.setting_value, PLAN_PRICES_USD.enterprise),
+      growth: parsePlanPrice(settings?.find((s) => s.setting_key === "realestate_plan_price_growth")?.setting_value, PLAN_PRICES_USD.growth),
+      pro: parsePlanPrice(settings?.find((s) => s.setting_key === "realestate_plan_price_pro")?.setting_value, PLAN_PRICES_USD.pro),
+      enterprise: parsePlanPrice(settings?.find((s) => s.setting_key === "realestate_plan_price_enterprise")?.setting_value, PLAN_PRICES_USD.enterprise),
     };
     const fallbackFxRate = parsePlanPrice(
       settings?.find((s) => s.setting_key === "usd_kes_rate")?.setting_value,
@@ -129,7 +129,7 @@ serve(async (req) => {
       metadata: {
         userId: userData.user.id,
         planKey,
-        platform: "DataPulseFlow",
+        platform: "DataPulseFlow-RealEstate",
         requested_currency: "USD",
         requested_amount_usd: planAmountUsd,
         charged_currency: chargeCurrency,
@@ -143,7 +143,7 @@ serve(async (req) => {
       throw new Error("Production checkout is using a Paystack test secret key. Switch admin setting to sk_live_*.");
     }
     if (!isLocalOrigin) {
-      payload.callback_url = `${origin}/dashboard?checkout=paystack-success`;
+      payload.callback_url = `${origin}/real-estate/dashboard?checkout=paystack-success`;
     }
 
     const initRes = await fetch("https://api.paystack.co/transaction/initialize", {

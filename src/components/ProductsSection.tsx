@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { ArrowUpRight } from "lucide-react";
+import { Link } from "react-router-dom";
 
 const products = [
   {
@@ -29,6 +30,29 @@ const ProductsSection = () => {
   return (
     <section className="py-16 md:py-20 px-4 md:px-6 w-full">
       <div className="w-full max-w-[1600px] mx-auto space-y-6 md:space-y-8">
+        <motion.div
+          initial={{ opacity: 0, y: 24 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-60px" }}
+          transition={{ duration: 0.6 }}
+          className="bg-section-light rounded-3xl p-6 md:p-8"
+        >
+          <p className="text-sm text-muted-foreground font-medium mb-3">Choose product line</p>
+          <h3 className="text-xl md:text-2xl font-serif-display text-foreground mb-4">
+            Same provider. Product-specific routing and workflows.
+          </h3>
+          <div className="flex flex-wrap gap-3">
+            <Link to="/" className="inline-flex items-center gap-2 rounded-full bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold">
+              Shopify Webhook APIs
+              <ArrowUpRight className="w-4 h-4" />
+            </Link>
+            <Link to="/real-estate" className="inline-flex items-center gap-2 rounded-full bg-foreground text-background px-4 py-2 text-sm font-semibold">
+              Real Estate API + Webhooks
+              <ArrowUpRight className="w-4 h-4" />
+            </Link>
+          </div>
+        </motion.div>
+
         {products.map((product, i) => (
           <motion.div
             key={product.title}

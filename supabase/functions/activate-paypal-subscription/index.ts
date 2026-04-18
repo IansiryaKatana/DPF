@@ -105,7 +105,7 @@ serve(async (req) => {
       user_id: userData.user.id,
       amount: amountValue,
       currency: "USD",
-      description: `PayPal recurring subscription (${planKey})`,
+      description: `Data Pulse Flow Shopify Suite (${planKey})`,
       invoice_date: nowIso,
       due_date: nowIso,
       status: "paid",

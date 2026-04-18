@@ -7,6 +7,8 @@ interface AuthContextType {
   session: Session | null;
   loading: boolean;
   isAdmin: boolean;
+  /** True when the user has a row in public.realestate_user_profile (Real Estate suite). */
+  isRealEstateUser: boolean;
   signOut: () => Promise<void>;
 }
 
@@ -15,6 +17,7 @@ const AuthContext = createContext<AuthContextType>({
   session: null,
   loading: true,
   isAdmin: false,
+  isRealEstateUser: false,
   signOut: async () => {},
 });
 
@@ -23,16 +26,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isRealEstateUser, setIsRealEstateUser] = useState(false);
   const roleCheckVersionRef = useRef(0);
 
-  const checkRole = async (userId: string) => {
-    const { data } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId);
-    const admin = data?.some((r: any) => r.role === "admin") ?? false;
+  const loadAccessFlags = async (userId: string) => {
+    const [rolesRes, reRes] = await Promise.all([
+      supabase.from("user_roles").select("role").eq("user_id", userId),
+      supabase.from("realestate_user_profile").select("user_id").eq("user_id", userId).maybeSingle(),
+    ]);
+    const admin = rolesRes.data?.some((r: any) => r.role === "admin") ?? false;
+    const reUser = !!reRes.data;
     setIsAdmin(admin);
-    return admin;
+    setIsRealEstateUser(reUser);
+    return { admin, isRealEstateUser: reUser };
   };
 
   useEffect(() => {
@@ -44,14 +50,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       if (!nextSession?.user) {
         setIsAdmin(false);
+        setIsRealEstateUser(false);
         setLoading(false);
         return;
       }
       const checkVersion = ++roleCheckVersionRef.current;
       setLoading(true);
-      void checkRole(nextSession.user.id)
+      void loadAccessFlags(nextSession.user.id)
         .catch(() => {
-          if (mounted && roleCheckVersionRef.current === checkVersion) setIsAdmin(false);
+          if (mounted && roleCheckVersionRef.current === checkVersion) {
+            setIsAdmin(false);
+            setIsRealEstateUser(false);
+          }
         })
         .finally(() => {
           if (mounted && roleCheckVersionRef.current === checkVersion) setLoading(false);
@@ -75,10 +85,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(null);
     setSession(null);
     setIsAdmin(false);
+    setIsRealEstateUser(false);
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, isAdmin, signOut }}>
+    <AuthContext.Provider value={{ user, session, loading, isAdmin, isRealEstateUser, signOut }}>
       {children}
     </AuthContext.Provider>
   );

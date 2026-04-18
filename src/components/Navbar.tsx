@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { ChevronDown, Menu, X } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Menu, X } from "lucide-react";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link } from "react-router-dom";
@@ -27,7 +27,13 @@ const Navbar = () => {
           <Link to="/login" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Sign In</Link>
         </div>
 
-        <div className="hidden md:block">
+        <div className="hidden md:flex items-center gap-2">
+          <Button variant="outline" size="sm" className="border-0 bg-[#513885] text-white hover:bg-[#513885]/90 hover:text-white" asChild>
+            <Link to="/real-estate">
+              Real Estate Suite
+              <ArrowUpRight className="w-4 h-4" />
+            </Link>
+          </Button>
           <Button variant="nav" size="sm" asChild>
             <Link to="/register">Start Free Trial</Link>
           </Button>

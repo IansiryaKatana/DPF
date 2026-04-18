@@ -193,7 +193,7 @@ serve(async (req) => {
         : orderId;
 
     const { error: subError } = await supabase
-      .from("subscriptions")
+      .from("realestate_subscriptions")
       .update({
         plan,
         status: "active",
@@ -215,7 +215,7 @@ serve(async (req) => {
     const invoiceRef = `paypal:${captureId}`;
 
     const { data: existingInvoice, error: existingInvoiceError } = await supabase
-      .from("invoices")
+      .from("realestate_invoices")
       .select("id")
       .eq("stripe_invoice_id", invoiceRef)
       .eq("user_id", userData.user.id)
@@ -225,11 +225,11 @@ serve(async (req) => {
     }
 
     if (!existingInvoice) {
-      const { error: invoiceError } = await supabase.from("invoices").insert({
+      const { error: invoiceError } = await supabase.from("realestate_invoices").insert({
         user_id: userData.user.id,
         amount: amountValue,
         currency,
-        description: `Data Pulse Flow Shopify Suite (${plan})`,
+        description: `Data Pulse Flow Real Estate Suite (${plan})`,
         invoice_date: nowIso,
         due_date: nowIso,
         status: "paid",
@@ -242,7 +242,7 @@ serve(async (req) => {
     }
 
     const { data: existingCode, error: existingCodeError } = await supabase
-      .from("client_access_codes")
+      .from("realestate_client_access_codes")
       .select("code, expires_at")
       .eq("user_id", userData.user.id)
       .eq("plan", plan)
@@ -259,7 +259,7 @@ serve(async (req) => {
     if (existingCode?.code) {
       finalAccessCode = existingCode.code;
     } else {
-      const { error: codeError } = await supabase.from("client_access_codes").insert({
+      const { error: codeError } = await supabase.from("realestate_client_access_codes").insert({
         user_id: userData.user.id,
         code: accessCode,
         plan,

@@ -29,12 +29,25 @@ const HeroSection = () => {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.3 }}
             >
-              <Button variant="hero" size="xl" className="w-full justify-between rounded-2xl h-16 md:h-20 lg:h-24 px-8 md:px-10 text-base md:text-lg lg:text-xl" asChild>
-                <Link to="/register">
-                  Request a Demo
-                  <ArrowUpRight className="w-5 h-5 lg:w-6 lg:h-6" />
-                </Link>
-              </Button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Button variant="hero" size="xl" className="w-full justify-between rounded-2xl h-16 md:h-20 lg:h-24 px-8 md:px-10 text-base md:text-lg lg:text-xl" asChild>
+                  <Link to="/register">
+                    Request a Demo
+                    <ArrowUpRight className="w-5 h-5 lg:w-6 lg:h-6" />
+                  </Link>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="xl"
+                  className="w-full justify-between rounded-2xl h-16 md:h-20 lg:h-24 px-8 md:px-10 text-base md:text-lg lg:text-xl border-border bg-background hover:bg-section-light"
+                  asChild
+                >
+                  <Link to="/real-estate">
+                    Real Estate Suite
+                    <ArrowUpRight className="w-5 h-5 lg:w-6 lg:h-6" />
+                  </Link>
+                </Button>
+              </div>
             </motion.div>
           </div>
 

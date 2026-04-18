@@ -27,14 +27,14 @@ import { motion } from "framer-motion";
 import { toast } from "sonner";
 import {
   Settings, Users, CreditCard, FileText, Shield, Save,
-  Eye, EyeOff, CheckCircle, Clock, AlertTriangle, Building2, Receipt, Mail
+  Eye, EyeOff, CheckCircle, Clock, AlertTriangle, Building2, Receipt, Mail,
 } from "lucide-react";
 import { ArrowUpRight } from "lucide-react";
 import BrandingSettings from "@/components/admin/BrandingSettings";
-import InvoiceManager from "@/components/admin/InvoiceManager";
+import RealEstateInvoiceManager from "@/components/admin/RealEstateInvoiceManager";
 import EmailLogView from "@/components/admin/EmailLogView";
 
-const Admin = () => {
+const RealEstateAdmin = () => {
   const { user, session, loading, isAdmin, signOut } = useAuth();
   const navigate = useNavigate();
   const [stripe, setStripe] = useState({ publishableKey: "", secretKey: "" });
@@ -56,9 +56,9 @@ const Admin = () => {
   const [activePaymentMethod, setActivePaymentMethod] = useState<string>("stripe");
   const [clientDeliverableZipUrl, setClientDeliverableZipUrl] = useState("");
   const [planPricing, setPlanPricing] = useState({
-    growth: "500",
-    pro: "700",
-    enterprise: "12000",
+    growth: "499",
+    pro: "4790",
+    enterprise: "14000",
   });
   const [emailScenarioToggles, setEmailScenarioToggles] = useState<Record<EmailScenarioKey, boolean>>({
     welcome: true,
@@ -76,14 +76,20 @@ const Admin = () => {
       Array.from({ length: size }, () => charset[Math.floor(Math.random() * charset.length)]).join("");
     return `DPF-${chunk(4)}-${chunk(4)}-${chunk(4)}`;
   };
+  const planLabel = (plan: string) => {
+    if (plan === "growth") return "Monthly";
+    if (plan === "pro") return "Annual";
+    if (plan === "enterprise") return "Lifetime";
+    return plan;
+  };
 
   useEffect(() => {
     if (!loading && (!user || !session)) {
-      navigate("/login");
+      navigate("/real-estate/login");
       return;
     }
     if (!loading && user && !isAdmin) {
-      navigate("/dashboard");
+      navigate("/real-estate/dashboard");
     }
   }, [user, session, loading, isAdmin, navigate]);
 
@@ -105,10 +111,10 @@ const Admin = () => {
           if (s.setting_key === "paystack_charge_currency") {
             setPaystackChargeCurrency(String(s.setting_value || "KES").toUpperCase() === "USD" ? "USD" : "KES");
           }
-          if (s.setting_key === "client_deliverable_zip_url") setClientDeliverableZipUrl(s.setting_value || "");
-          if (s.setting_key === "plan_price_growth") setPlanPricing(prev => ({ ...prev, growth: s.setting_value || prev.growth }));
-          if (s.setting_key === "plan_price_pro") setPlanPricing(prev => ({ ...prev, pro: s.setting_value || prev.pro }));
-          if (s.setting_key === "plan_price_enterprise") setPlanPricing(prev => ({ ...prev, enterprise: s.setting_value || prev.enterprise }));
+          if (s.setting_key === "realestate_client_deliverable_zip_url") setClientDeliverableZipUrl(s.setting_value || "");
+          if (s.setting_key === "realestate_plan_price_growth") setPlanPricing(prev => ({ ...prev, growth: s.setting_value || prev.growth }));
+          if (s.setting_key === "realestate_plan_price_pro") setPlanPricing(prev => ({ ...prev, pro: s.setting_value || prev.pro }));
+          if (s.setting_key === "realestate_plan_price_enterprise") setPlanPricing(prev => ({ ...prev, enterprise: s.setting_value || prev.enterprise }));
           if (s.setting_key === "support_contact_email") setSupportContactEmail(s.setting_value || "support@datapulseflow.com");
           if (s.setting_key === "resend_api_key") setResendApiKey(s.setting_value || "");
           if (s.setting_key === emailScenarioSettingKey("welcome")) {
@@ -129,11 +135,11 @@ const Admin = () => {
         });
       }
 
-      // Fetch demo requests
+      // Fetch Real Estate demo requests only
       const { data: demos, error: demosErr } = await supabase
         .from("demo_requests")
         .select("*")
-        .eq("product_suite", "shopify")
+        .eq("product_suite", "realestate")
         .order("created_at", { ascending: false });
       if (demosErr) {
         // Avoid noisy permission toasts; guard/redirect handles unauthorized users.
@@ -141,24 +147,30 @@ const Admin = () => {
       }
       setDemoRequests(demos || []);
 
-      // Fetch clients (profiles + subscriptions)
-      const { data: profilesData } = await supabase.from("profiles").select("*");
-      const { data: subsData } = await supabase.from("subscriptions").select("*");
-      if (profilesData && subsData) {
-        const merged = profilesData.map((p: any) => {
-          const sub = subsData.find((s: any) => s.user_id === p.user_id);
-          return {
-            id: p.id,
-            user_id: p.user_id,
-            name: p.full_name || p.email || "Unknown",
-            email: p.email || "",
-            plan: sub?.plan || "—",
-            status: sub?.status || "—",
-            company: p.company_name || "",
-          };
-        });
-        setClients(merged);
-      }
+      // Fetch Real Estate clients only (profile + subscription)
+      const [reProfilesRes, profilesRes, reSubsRes] = await Promise.all([
+        supabase.from("realestate_user_profile").select("*"),
+        supabase.from("profiles").select("user_id, email, full_name, company_name"),
+        supabase.from("realestate_subscriptions").select("*"),
+      ]);
+
+      const reProfiles = reProfilesRes.data || [];
+      const profiles = profilesRes.data || [];
+      const reSubs = reSubsRes.data || [];
+      const merged = reProfiles.map((rp: any) => {
+        const p = profiles.find((prof: any) => prof.user_id === rp.user_id);
+        const sub = reSubs.find((s: any) => s.user_id === rp.user_id);
+        return {
+          id: rp.user_id,
+          user_id: rp.user_id,
+          name: rp.full_name || p?.full_name || p?.email || "Unknown",
+          email: p?.email || "",
+          plan: sub?.plan || "growth",
+          status: sub?.status || "trialing",
+          company: rp.company_name || p?.company_name || "",
+        };
+      });
+      setClients(merged);
 
       // Fetch active payment method
       const apm = settings?.find((s: any) => s.setting_key === "active_payment_method");
@@ -207,9 +219,9 @@ const Admin = () => {
     setSaving(true);
     try {
       const entries = [
-        ["plan_price_growth", planPricing.growth],
-        ["plan_price_pro", planPricing.pro],
-        ["plan_price_enterprise", planPricing.enterprise],
+        ["realestate_plan_price_growth", planPricing.growth],
+        ["realestate_plan_price_pro", planPricing.pro],
+        ["realestate_plan_price_enterprise", planPricing.enterprise],
       ] as const;
 
       for (const [settingKey, settingValue] of entries) {
@@ -268,7 +280,7 @@ const Admin = () => {
     const nowIso = new Date().toISOString();
     const expiresIso = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     try {
-      const { error: codeError } = await supabase.from("client_access_codes").insert({
+      const { error: codeError } = await supabase.from("realestate_client_access_codes").insert({
         user_id: client.user_id,
         code,
         plan: client.plan === "—" ? "growth" : client.plan,
@@ -279,7 +291,7 @@ const Admin = () => {
       if (codeError) throw codeError;
 
       const { error: subError } = await supabase
-        .from("subscriptions")
+        .from("realestate_subscriptions")
         .update({
           status: "active",
           current_period_start: nowIso,
@@ -317,7 +329,7 @@ const Admin = () => {
 
       // Persist as storage URI so clients can fetch signed links even with private buckets.
       const storageUri = `storage://client-deliverables/${filePath}`;
-      await saveSetting("client_deliverable_zip_url", storageUri, false);
+      await saveSetting("realestate_client_deliverable_zip_url", storageUri, false);
       setClientDeliverableZipUrl(storageUri);
       toast.success("Deliverable ZIP uploaded and saved.");
     } catch (error: any) {
@@ -334,21 +346,20 @@ const Admin = () => {
     }
   };
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-background"><p>Loading...</p></div>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-emerald-950/10"><p>Loading...</p></div>;
 
   return (
-    <div className="min-h-screen bg-background">
-      <nav className="border-b border-border bg-card">
+    <div className="min-h-screen bg-gradient-to-b from-emerald-950/20 via-background to-background border-t-[3px] border-emerald-700">
+      <nav className="border-b border-emerald-800/30 bg-card/95 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <rect x="2" y="3" width="6" height="12" rx="1" fill="hsl(var(--primary-foreground))" />
-                <rect x="10" y="6" width="6" height="9" rx="1" fill="hsl(var(--primary-foreground))" opacity="0.7" />
-              </svg>
+            <div className="w-8 h-8 rounded-lg bg-emerald-700 flex items-center justify-center text-emerald-50">
+              <Building2 className="w-4 h-4" strokeWidth={2} />
             </div>
             <span className="text-lg font-serif-display text-foreground">DataPulseFlow</span>
-            <Badge variant="secondary" className="ml-2">Admin</Badge>
+            <Badge variant="outline" className="ml-2 border-emerald-700/50 text-emerald-900 dark:text-emerald-100">
+              Real Estate · Admin
+            </Badge>
           </div>
           <div className="flex items-center gap-4">
             <AlertDialog>
@@ -364,12 +375,12 @@ const Admin = () => {
                 <AlertDialogHeader>
                   <AlertDialogTitle>Sign out?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    You will be logged out of your DataPulseFlow admin dashboard.
+                    You will be logged out of the Real Estate admin dashboard.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => { signOut(); navigate("/"); }}>
+                  <AlertDialogAction onClick={() => { signOut(); navigate("/real-estate"); }}>
                     Sign Out
                   </AlertDialogAction>
                 </AlertDialogFooter>
@@ -381,8 +392,10 @@ const Admin = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-          <h1 className="text-2xl sm:text-3xl font-serif-display text-foreground mb-2">Admin Dashboard</h1>
-          <p className="text-muted-foreground mb-8">Manage payment integrations, clients, and demo requests</p>
+          <h1 className="text-2xl sm:text-3xl font-serif-display text-foreground mb-2">Real Estate · Admin</h1>
+          <p className="text-muted-foreground mb-8">
+            Real Estate controls only for subscriptions, pricing, clients, invoices, and demo approvals.
+          </p>
         </motion.div>
 
         <Tabs defaultValue="payments" className="space-y-6">
@@ -596,15 +609,15 @@ const Admin = () => {
 
               <Card className="mt-6">
                 <CardHeader>
-                  <CardTitle className="text-xl">Plan Pricing</CardTitle>
+                  <CardTitle className="text-xl">Real Estate Plan Pricing</CardTitle>
                   <CardDescription>
-                    Update client-visible plan amounts used by PayPal and Paystack checkout flows.
+                    Configure Real Estate card prices (Monthly, Annual, Lifetime) used by PayPal and Paystack.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="space-y-2">
-                      <Label>Growth (USD)</Label>
+                      <Label>Monthly (USD)</Label>
                       <Input
                         type="number"
                         min="1"
@@ -614,7 +627,7 @@ const Admin = () => {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Pro (USD)</Label>
+                      <Label>Annual (USD)</Label>
                       <Input
                         type="number"
                         min="1"
@@ -624,7 +637,7 @@ const Admin = () => {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Enterprise (USD)</Label>
+                      <Label>Lifetime (USD)</Label>
                       <Input
                         type="number"
                         min="1"
@@ -636,16 +649,16 @@ const Admin = () => {
                   </div>
                   <Button onClick={handleSavePlanPricing} disabled={saving}>
                     <Save className="w-4 h-4 mr-2" />
-                    {saving ? "Saving..." : "Save Plan Pricing"}
+                    {saving ? "Saving..." : "Save Real Estate Plan Pricing"}
                   </Button>
                 </CardContent>
               </Card>
 
               <Card className="mt-6">
                 <CardHeader>
-                  <CardTitle className="text-xl">Client Deliverable ZIP</CardTitle>
+                  <CardTitle className="text-xl">Real Estate Client Deliverable ZIP</CardTitle>
                   <CardDescription>
-                    Configure the ZIP file URL delivered to clients after payment.
+                    Configure the ZIP file delivered to Real Estate clients after payment.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -681,11 +694,11 @@ const Admin = () => {
                       setSaving(true);
                       try {
                         await saveSetting(
-                          "client_deliverable_zip_url",
+                          "realestate_client_deliverable_zip_url",
                           clientDeliverableZipUrl.trim(),
                           false
                         );
-                        toast.success("Client deliverable ZIP URL saved.");
+                        toast.success("Real Estate deliverable ZIP URL saved.");
                       } catch (error: any) {
                         toast.error("Failed to save deliverable URL: " + (error.message || "Unknown error"));
                       } finally {
@@ -695,7 +708,7 @@ const Admin = () => {
                     disabled={saving || uploadingDeliverable}
                   >
                     <Save className="w-4 h-4 mr-2" />
-                    {saving ? "Saving..." : "Save Deliverable URL"}
+                    {saving ? "Saving..." : "Save Real Estate Deliverable URL"}
                   </Button>
                 </CardContent>
               </Card>
@@ -706,8 +719,8 @@ const Admin = () => {
           <TabsContent value="clients">
             <Card>
               <CardHeader>
-                <CardTitle>Active Clients</CardTitle>
-                <CardDescription>Manage subscriptions and client accounts</CardDescription>
+                <CardTitle>Real Estate Clients</CardTitle>
+                <CardDescription>Manage Real Estate subscriptions and account access.</CardDescription>
               </CardHeader>
               <CardContent>
                 {clients.length === 0 ? (
@@ -729,7 +742,7 @@ const Admin = () => {
                         <tr key={client.id} className="border-b border-border/50">
                           <td className="py-3 text-foreground font-medium">{client.name}</td>
                           <td className="py-3 text-muted-foreground hidden sm:table-cell">{client.email}</td>
-                          <td className="py-3"><Badge variant="secondary">{client.plan}</Badge></td>
+                          <td className="py-3"><Badge variant="secondary">{planLabel(client.plan)}</Badge></td>
                           <td className="py-3">
                             <Badge variant={client.status === "active" ? "default" : "secondary"}>
                               {client.status === "active" && <CheckCircle className="w-3 h-3 mr-1" />}
@@ -756,12 +769,12 @@ const Admin = () => {
           <TabsContent value="demos">
             <Card>
               <CardHeader>
-                <CardTitle>Demo Requests</CardTitle>
-                <CardDescription>Approve or reject incoming demo requests. Users cannot access the platform until approved.</CardDescription>
+                <CardTitle>Real Estate Demo Requests</CardTitle>
+                <CardDescription>Approve or reject Real Estate demo requests. Access stays blocked until approved.</CardDescription>
               </CardHeader>
               <CardContent>
                 {demoRequests.length === 0 ? (
-                  <p className="text-muted-foreground text-center py-8">No demo requests yet</p>
+                  <p className="text-muted-foreground text-center py-8">No Real Estate demo requests yet</p>
                 ) : (
                   <div className="space-y-3">
                     {demoRequests.map((req: any) => (
@@ -787,7 +800,7 @@ const Admin = () => {
                                   .from("demo_requests")
                                   .update({ approved: true, status: "approved" })
                                   .eq("id", req.id)
-                                  .eq("product_suite", "shopify");
+                                  .eq("product_suite", "realestate");
                                 if (error) {
                                   toast.error("Failed to approve");
                                 } else {
@@ -798,7 +811,7 @@ const Admin = () => {
                                   // Send approval email
                                   const email = demoApprovedEmail({
                                     name: req.full_name,
-                                    loginUrl: `${window.location.origin}/login`,
+                                    loginUrl: `${window.location.origin}/real-estate/login`,
                                   });
                                   if (emailScenarioToggles.demo_approved) {
                                     sendNotifyEmail({ to: req.email, ...email, templateName: "demo-approved" }).catch(() => {});
@@ -816,7 +829,7 @@ const Admin = () => {
                                   .from("demo_requests")
                                   .update({ approved: false, status: "rejected" })
                                   .eq("id", req.id)
-                                  .eq("product_suite", "shopify");
+                                  .eq("product_suite", "realestate");
                                 if (error) {
                                   toast.error("Failed to reject");
                                 } else {
@@ -846,7 +859,7 @@ const Admin = () => {
 
           {/* Invoices Tab */}
           <TabsContent value="invoices">
-            <InvoiceManager />
+            <RealEstateInvoiceManager />
           </TabsContent>
 
           {/* Emails Tab */}
@@ -956,4 +969,4 @@ const Admin = () => {
   );
 };
 
-export default Admin;
+export default RealEstateAdmin;

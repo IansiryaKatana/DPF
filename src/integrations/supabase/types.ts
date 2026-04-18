@@ -122,6 +122,7 @@ export type Database = {
           full_name: string
           id: string
           message: string | null
+          product_suite: string
           status: string
         }
         Insert: {
@@ -132,6 +133,7 @@ export type Database = {
           full_name: string
           id?: string
           message?: string | null
+          product_suite?: string
           status?: string
         }
         Update: {
@@ -142,6 +144,7 @@ export type Database = {
           full_name?: string
           id?: string
           message?: string | null
+          product_suite?: string
           status?: string
         }
         Relationships: []
@@ -287,6 +290,153 @@ export type Database = {
           email?: string | null
           full_name?: string | null
           id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      realestate_client_access_codes: {
+        Row: {
+          code: string
+          created_at: string
+          expires_at: string
+          id: string
+          issued_at: string
+          plan: string
+          redeemed_at: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          expires_at: string
+          id?: string
+          issued_at?: string
+          plan?: string
+          redeemed_at?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          issued_at?: string
+          plan?: string
+          redeemed_at?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      realestate_invoices: {
+        Row: {
+          amount: number
+          created_at: string
+          currency: string
+          description: string | null
+          due_date: string | null
+          id: string
+          invoice_date: string
+          paid_at: string | null
+          status: string
+          stripe_invoice_id: string | null
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          currency?: string
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          invoice_date?: string
+          paid_at?: string | null
+          status?: string
+          stripe_invoice_id?: string | null
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          currency?: string
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          invoice_date?: string
+          paid_at?: string | null
+          status?: string
+          stripe_invoice_id?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      realestate_subscriptions: {
+        Row: {
+          created_at: string
+          current_period_end: string | null
+          current_period_start: string | null
+          id: string
+          plan: string
+          status: string
+          stripe_customer_id: string | null
+          stripe_subscription_id: string | null
+          trial_end: string
+          trial_start: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          current_period_end?: string | null
+          current_period_start?: string | null
+          id?: string
+          plan?: string
+          status?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          trial_end?: string
+          trial_start?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          current_period_end?: string | null
+          current_period_start?: string | null
+          id?: string
+          plan?: string
+          status?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          trial_end?: string
+          trial_start?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      realestate_user_profile: {
+        Row: {
+          company_name: string | null
+          created_at: string
+          full_name: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          company_name?: string | null
+          created_at?: string
+          full_name?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          company_name?: string | null
+          created_at?: string
+          full_name?: string | null
           updated_at?: string
           user_id?: string
         }

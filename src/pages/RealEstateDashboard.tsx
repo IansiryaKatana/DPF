@@ -2,7 +2,11 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import { PLANS, getPlanByProductId, PlanKey } from "@/config/plans";
+import {
+  REALESTATE_PLANS,
+  getRealEstatePlanByProductId,
+  type RealEstatePlanKey,
+} from "@/config/realestatePlans";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -88,7 +92,7 @@ class FunctionCallError extends Error {
   }
 }
 
-const Dashboard = () => {
+const RealEstateDashboard = () => {
   const { user, session, loading, isAdmin, isRealEstateUser, signOut } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -109,7 +113,7 @@ const Dashboard = () => {
   /** Must match Admin PayPal sandbox toggle for the checkout app credentials. */
   const [paypalSandboxMode, setPaypalSandboxMode] = useState(true);
   const [paystackPublicKey, setPaystackPublicKey] = useState<string>("");
-  const [planPriceOverrides, setPlanPriceOverrides] = useState<Partial<Record<PlanKey, number>>>({});
+  const [planPriceOverrides, setPlanPriceOverrides] = useState<Partial<Record<RealEstatePlanKey, number>>>({});
   const [clientDeliverableZipUrl, setClientDeliverableZipUrl] = useState("");
   const [resolvedDeliverableUrl, setResolvedDeliverableUrl] = useState<string>("");
   const [resolvingDeliverable, setResolvingDeliverable] = useState(false);
@@ -234,22 +238,18 @@ const Dashboard = () => {
   useEffect(() => {
     if (loading) return;
     if (!user || !session) {
-      navigate("/login");
+      navigate("/real-estate/login?next=/real-estate/dashboard");
       return;
     }
-    if (isAdmin) {
-      navigate("/admin");
-      return;
-    }
-    if (isRealEstateUser) {
-      navigate("/dashboard/real-estate");
+    if (!isRealEstateUser && !isAdmin) {
+      navigate("/dashboard");
     }
   }, [user, session, loading, isAdmin, isRealEstateUser, navigate]);
 
   useEffect(() => {
     const checkout = searchParams.get("checkout");
     if (checkout === "success") {
-      toast.success("Subscription activated! Welcome to DataPulseFlow.");
+      toast.success("Subscription activated! Welcome to DataPulseFlow Real Estate.");
     } else if (checkout === "canceled") {
       toast.info("Checkout was canceled.");
     }
@@ -263,7 +263,7 @@ const Dashboard = () => {
         product_id: string | null;
         subscription_end: string | null;
         status: string | null;
-      }>("check-subscription");
+      }>("check-realestate-subscription");
       setStripeStatus(data);
     } catch (e: any) {
       console.error("Failed to check subscription:", e);
@@ -278,8 +278,8 @@ const Dashboard = () => {
 
     const fetchData = async () => {
       const [subRes, invRes, profRes, settingsRes, codeRes] = await Promise.all([
-        supabase.from("subscriptions").select("*").eq("user_id", user.id).maybeSingle(),
-        supabase.from("invoices").select("*").eq("user_id", user.id).order("invoice_date", { ascending: false }).then(res => {
+        supabase.from("realestate_subscriptions").select("*").eq("user_id", user.id).maybeSingle(),
+        supabase.from("realestate_invoices").select("*").eq("user_id", user.id).order("invoice_date", { ascending: false }).then(res => {
           // Client-side overdue detection
           const now = new Date();
           const enriched = (res.data || []).map((inv: any) => {
@@ -299,13 +299,13 @@ const Dashboard = () => {
             "paypal_client_id",
             "paypal_sandbox_mode",
             "paystack_public_key",
-            "client_deliverable_zip_url",
-            "plan_price_growth",
-            "plan_price_pro",
-            "plan_price_enterprise",
+            "realestate_client_deliverable_zip_url",
+            "realestate_plan_price_growth",
+            "realestate_plan_price_pro",
+            "realestate_plan_price_enterprise",
           ]),
         supabase
-          .from("client_access_codes")
+          .from("realestate_client_access_codes")
           .select("*")
           .eq("user_id", user.id)
           .order("expires_at", { ascending: false })
@@ -325,15 +325,15 @@ const Dashboard = () => {
       setPaypalSandboxMode(sandboxSetting?.setting_value !== "false");
       const paystackPublicKeySetting = settingsRows.find((s: any) => s.setting_key === "paystack_public_key");
       setPaystackPublicKey((paystackPublicKeySetting?.setting_value || "").trim());
-      const deliverableUrl = (settingsRows.find((s: any) => s.setting_key === "client_deliverable_zip_url")?.setting_value || "").trim();
+      const deliverableUrl = (settingsRows.find((s: any) => s.setting_key === "realestate_client_deliverable_zip_url")?.setting_value || "").trim();
       setClientDeliverableZipUrl(deliverableUrl);
       const toNumberOrNull = (value: string | null | undefined) => {
         const parsed = Number(value);
         return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
       };
-      const growthPrice = toNumberOrNull(settingsRows.find((s: any) => s.setting_key === "plan_price_growth")?.setting_value);
-      const proPrice = toNumberOrNull(settingsRows.find((s: any) => s.setting_key === "plan_price_pro")?.setting_value);
-      const enterprisePrice = toNumberOrNull(settingsRows.find((s: any) => s.setting_key === "plan_price_enterprise")?.setting_value);
+      const growthPrice = toNumberOrNull(settingsRows.find((s: any) => s.setting_key === "realestate_plan_price_growth")?.setting_value);
+      const proPrice = toNumberOrNull(settingsRows.find((s: any) => s.setting_key === "realestate_plan_price_pro")?.setting_value);
+      const enterprisePrice = toNumberOrNull(settingsRows.find((s: any) => s.setting_key === "realestate_plan_price_enterprise")?.setting_value);
       setPlanPriceOverrides({
         growth: growthPrice ?? undefined,
         pro: proPrice ?? undefined,
@@ -348,12 +348,12 @@ const Dashboard = () => {
     return () => clearInterval(interval);
   }, [user, session, checkSubscription]);
 
-  const handleStripeCheckout = async (planKey: PlanKey) => {
+  const handleStripeCheckout = async (planKey: RealEstatePlanKey) => {
     setCheckingOut(planKey);
     try {
       if (!session) throw new Error("Please sign in again.");
-      const plan = PLANS[planKey];
-      const data = await callEdgeFunction<{ url?: string }>("create-checkout", {
+      const plan = REALESTATE_PLANS[planKey];
+      const data = await callEdgeFunction<{ url?: string }>("create-realestate-checkout", {
         priceId: plan.price_id,
         billingType: plan.billing_type,
       });
@@ -367,7 +367,7 @@ const Dashboard = () => {
     }
   };
 
-  const handlePaystackCheckout = async (planKey: PlanKey) => {
+  const handlePaystackCheckout = async (planKey: RealEstatePlanKey) => {
     setCheckingOut(planKey);
     let hostedUrl = "";
     try {
@@ -381,7 +381,7 @@ const Dashboard = () => {
         amount_minor_units?: number;
         charge_currency?: string;
         key_mode?: "live" | "test";
-      }>("create-paystack-checkout", { planKey });
+      }>("create-realestate-paystack-checkout", { planKey });
       hostedUrl = data.authorization_url || "";
 
       if (!data?.access_code) {
@@ -440,7 +440,7 @@ const Dashboard = () => {
     async (orderId: string) => {
       setIsProcessingPayPalPayment(true);
       try {
-        const data = await callEdgeFunction<{ status?: string }>("capture-paypal-order", { orderId });
+        const data = await callEdgeFunction<{ status?: string }>("capture-realestate-paypal-order", { orderId });
         if (data?.status === "COMPLETED") {
           toast.success("PayPal card payment completed successfully.");
           if ((data as any)?.accessCode) {
@@ -450,10 +450,10 @@ const Dashboard = () => {
           toast.info("PayPal payment authorized. Please confirm status in admin.");
         }
         const [{ data: subData }, { data: invData }, { data: codeData }] = await Promise.all([
-          supabase.from("subscriptions").select("*").eq("user_id", user?.id ?? "").maybeSingle(),
-          supabase.from("invoices").select("*").eq("user_id", user?.id ?? "").order("invoice_date", { ascending: false }),
+          supabase.from("realestate_subscriptions").select("*").eq("user_id", user?.id ?? "").maybeSingle(),
+          supabase.from("realestate_invoices").select("*").eq("user_id", user?.id ?? "").order("invoice_date", { ascending: false }),
           supabase
-            .from("client_access_codes")
+            .from("realestate_client_access_codes")
             .select("*")
             .eq("user_id", user?.id ?? "")
             .order("expires_at", { ascending: false })
@@ -478,7 +478,7 @@ const Dashboard = () => {
         toast.info("PayPal billing changes are managed by support from the admin side.");
         return;
       }
-      const data = await callEdgeFunction<{ url?: string }>("customer-portal");
+      const data = await callEdgeFunction<{ url?: string }>("customer-portal-realestate");
       if (data?.url) {
         window.open(data.url, "_blank");
       }
@@ -493,18 +493,18 @@ const Dashboard = () => {
     try {
       if (!session) throw new Error("Please sign in again.");
       setIsProcessingPayPalPayment(true);
-      const data = await callEdgeFunction<{ status?: string }>("capture-paypal-order", { orderId });
+      const data = await callEdgeFunction<{ status?: string }>("capture-realestate-paypal-order", { orderId });
       if (data?.status === "COMPLETED") {
         toast.success("PayPal payment completed successfully.");
         if (data?.accessCode) {
           toast.success(`New 30-day access code issued: ${data.accessCode}`);
         }
         const [{ data: subData }, { data: invData }] = await Promise.all([
-          supabase.from("subscriptions").select("*").eq("user_id", user?.id ?? "").maybeSingle(),
-          supabase.from("invoices").select("*").eq("user_id", user?.id ?? "").order("invoice_date", { ascending: false }),
+          supabase.from("realestate_subscriptions").select("*").eq("user_id", user?.id ?? "").maybeSingle(),
+          supabase.from("realestate_invoices").select("*").eq("user_id", user?.id ?? "").order("invoice_date", { ascending: false }),
         ]);
         const { data: codeData } = await supabase
-          .from("client_access_codes")
+          .from("realestate_client_access_codes")
           .select("*")
           .eq("user_id", user?.id ?? "")
           .order("expires_at", { ascending: false })
@@ -528,7 +528,7 @@ const Dashboard = () => {
       if (!session) throw new Error("Please sign in again.");
       setIsProcessingPayPalPayment(true);
       const data = await callEdgeFunction<{ status?: string; accessCode?: string }>(
-        "verify-paystack-payment",
+        "verify-realestate-paystack-payment",
         { reference },
       );
       if (data?.status === "COMPLETED") {
@@ -541,11 +541,11 @@ const Dashboard = () => {
           accessCode: data?.accessCode,
         });
         const [{ data: subData }, { data: invData }] = await Promise.all([
-          supabase.from("subscriptions").select("*").eq("user_id", user?.id ?? "").maybeSingle(),
-          supabase.from("invoices").select("*").eq("user_id", user?.id ?? "").order("invoice_date", { ascending: false }),
+          supabase.from("realestate_subscriptions").select("*").eq("user_id", user?.id ?? "").maybeSingle(),
+          supabase.from("realestate_invoices").select("*").eq("user_id", user?.id ?? "").order("invoice_date", { ascending: false }),
         ]);
         const { data: codeData } = await supabase
-          .from("client_access_codes")
+          .from("realestate_client_access_codes")
           .select("*")
           .eq("user_id", user?.id ?? "")
           .order("expires_at", { ascending: false })
@@ -579,7 +579,7 @@ const Dashboard = () => {
     if (!reference) return;
     if (processedPaystackReferences.current.has(reference)) return;
     processedPaystackReferences.current.add(reference);
-    navigate("/dashboard", { replace: true });
+    navigate("/real-estate/dashboard", { replace: true });
     void handlePaystackVerification(reference);
   }, [searchParams, handlePaystackVerification, navigate]);
 
@@ -635,17 +635,17 @@ const Dashboard = () => {
   const isSubscribed = stripeStatus?.subscribed || subscription?.status === "active";
   const currentPlan = isSubscribed
     ? (stripeStatus?.product_id
-        ? getPlanByProductId(stripeStatus.product_id)
-        : (subscription?.plan as PlanKey | null) ?? null)
+        ? getRealEstatePlanByProductId(stripeStatus.product_id)
+        : (subscription?.plan as RealEstatePlanKey | null) ?? null)
     : null;
   /** Plan key once user is on a paid/active subscription (top summary + hide duplicate grid card). */
   const paidPlanKey =
     isSubscribed && currentPlan
       ? currentPlan
       : isSubscribed && subscription?.plan
-        ? (subscription.plan as PlanKey)
+        ? (subscription.plan as RealEstatePlanKey)
         : null;
-  const showCurrentPlanSummary = isSubscribed && paidPlanKey != null && paidPlanKey in PLANS;
+  const showCurrentPlanSummary = isSubscribed && paidPlanKey != null && paidPlanKey in REALESTATE_PLANS;
   const subStatus = stripeStatus?.status || subscription?.status || "trialing";
 
   const trialRemainingMs = subscription?.trial_end
@@ -721,7 +721,7 @@ const Dashboard = () => {
       : "bg-gradient-to-r from-[#123d24] via-[#1d5a35] to-[#2f7a48]";
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background border-t-[3px] border-emerald-700 bg-gradient-to-b from-emerald-950/10 to-background">
       <AlertDialog open={paymentSuccessDialog.open} onOpenChange={(open) => setPaymentSuccessDialog((prev) => ({ ...prev, open }))}>
         <AlertDialogContent className="border-0 bg-gradient-to-br from-[#d8fce2] via-[#b9f6c8] to-[#8de3aa]">
           <AlertDialogHeader>
@@ -770,6 +770,9 @@ const Dashboard = () => {
               </svg>
             </div>
             <span className="text-lg font-serif-display text-foreground">DataPulseFlow</span>
+            <Badge variant="outline" className="ml-2 border-emerald-700/50 text-emerald-900 dark:text-emerald-100 text-[10px] uppercase">
+              Real Estate
+            </Badge>
           </div>
           <div className="flex items-center gap-4">
             <span className="text-sm text-muted-foreground hidden sm:block">{profile?.email || user?.email}</span>
@@ -786,12 +789,12 @@ const Dashboard = () => {
                 <AlertDialogHeader>
                   <AlertDialogTitle>Sign out?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    You will be logged out of your DataPulseFlow dashboard.
+                    You will be logged out of your Real Estate dashboard.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => { signOut(); navigate("/"); }}>
+                  <AlertDialogAction onClick={() => { signOut(); navigate("/real-estate"); }}>
                     Sign Out
                   </AlertDialogAction>
                 </AlertDialogFooter>
@@ -824,7 +827,6 @@ const Dashboard = () => {
           <h1 className="text-2xl sm:text-3xl font-serif-display text-foreground mb-2">
             Welcome, {profile?.full_name || "there"}
           </h1>
-          <p className="text-muted-foreground">Manage your DataPulseFlow integration platform</p>
         </motion.div>
 
         {/* Trial Banner */}
@@ -887,13 +889,13 @@ const Dashboard = () => {
           {[
             {
               icon: Activity,
-              label: "Sync Status",
+              label: "Pipeline status",
               value: isSystemLocked ? "Locked" : "Active",
-              color: isSystemLocked ? "text-destructive" : "text-green-600",
+              color: isSystemLocked ? "text-destructive" : "text-emerald-600",
             },
-            { icon: Zap, label: "Webhooks", value: "6 Active", color: "text-primary" },
-            { icon: Shield, label: "Security", value: "HMAC Verified", color: "text-primary" },
-            { icon: BarChart3, label: "Invoices Logged", value: String(invoices.length), color: "text-primary" },
+            { icon: Zap, label: "Connectors", value: "Ready", color: "text-emerald-700" },
+            { icon: Shield, label: "Security", value: "Verified", color: "text-emerald-700" },
+            { icon: BarChart3, label: "Invoices", value: String(invoices.length), color: "text-emerald-700" },
           ].map((stat, i) => (
             <motion.div key={i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 * i }}>
               <Card className="border-0 bg-gradient-to-br from-card via-card to-muted/20 shadow-sm">
@@ -935,23 +937,23 @@ const Dashboard = () => {
                     <div>
                       <p className="text-xs uppercase tracking-wider text-primary/80 mb-1">Current Plan</p>
                       <div className="flex items-center gap-2 mb-1">
-                        <h3 className="text-xl font-semibold text-foreground">{PLANS[paidPlanKey].name}</h3>
+                        <h3 className="text-xl font-semibold text-foreground">{REALESTATE_PLANS[paidPlanKey].name}</h3>
                         <Badge variant="default">
                           <CheckCircle className="w-3 h-3 mr-1" />
                           {subStatus === "trialing" ? "Trial" : "Active"}
                         </Badge>
                       </div>
                       <p className="text-3xl font-bold text-foreground">
-                        ${PLANS[paidPlanKey].price.toLocaleString()}
+                        ${REALESTATE_PLANS[paidPlanKey].price.toLocaleString()}
                         <span className="text-sm font-normal text-muted-foreground">
-                          {PLANS[paidPlanKey].billing_type === "one_time" ? " one-time" : "/month"}
+                          {REALESTATE_PLANS[paidPlanKey].billing_type === "one_time" ? " one-time" : "/month"}
                         </span>
                       </p>
                       <div className="mt-2 space-y-1">
-                        {PLANS[paidPlanKey].billing_type === "recurring" && displayNextBilling && (
+                        {REALESTATE_PLANS[paidPlanKey].billing_type === "recurring" && displayNextBilling && (
                           <p className="text-sm text-muted-foreground">Next auto-charge: {displayNextBilling}</p>
                         )}
-                        {PLANS[paidPlanKey].billing_type === "recurring" &&
+                        {REALESTATE_PLANS[paidPlanKey].billing_type === "recurring" &&
                           activePaymentMethod === "paypal" &&
                           subscription?.stripe_subscription_id?.startsWith("paypal_sub:") && (
                           <p className="text-xs text-muted-foreground">
@@ -986,24 +988,24 @@ const Dashboard = () => {
               {/* Plan Selection - only active payment method */}
               <div
                 className={`grid gap-4 ${
-                  (Object.keys(PLANS) as PlanKey[]).filter((k) => !(showCurrentPlanSummary && paidPlanKey === k)).length <= 2
+                  (Object.keys(REALESTATE_PLANS) as RealEstatePlanKey[]).filter((k) => !(showCurrentPlanSummary && paidPlanKey === k)).length <= 2
                     ? "sm:grid-cols-2"
                     : "sm:grid-cols-3"
                 }`}
               >
-                {(Object.entries(PLANS) as [PlanKey, typeof PLANS[PlanKey]][])
+                {(Object.entries(REALESTATE_PLANS) as [RealEstatePlanKey, (typeof REALESTATE_PLANS)[RealEstatePlanKey]][])
                   .filter(([key]) => !(showCurrentPlanSummary && paidPlanKey === key))
                   .map(([key, plan]) => {
                   const isCurrent = currentPlan === key;
                   const isEnterprise = key === "enterprise";
                   const isLockedForPurchase = planPurchasesLocked && !isCurrent;
                   const planShadeClass = isCurrent
-                    ? "bg-gradient-to-br from-sky-500/40 via-sky-500/30 to-sky-500/20 shadow-lg shadow-sky-500/25"
+                    ? "bg-gradient-to-br from-emerald-500/35 via-emerald-400/25 to-emerald-300/15 shadow-lg shadow-emerald-500/20"
                     : key === "growth"
-                    ? "bg-gradient-to-br from-sky-500/20 via-sky-400/10 to-transparent shadow-md shadow-sky-500/20"
+                    ? "bg-gradient-to-br from-emerald-400/20 via-emerald-300/10 to-transparent shadow-md shadow-emerald-500/15"
                     : key === "pro"
-                    ? "bg-gradient-to-br from-sky-500/30 via-sky-400/20 to-transparent shadow-md shadow-sky-500/25"
-                    : "bg-gradient-to-br from-sky-600/40 via-sky-500/25 to-transparent shadow-md shadow-sky-600/30";
+                    ? "bg-gradient-to-br from-emerald-500/28 via-emerald-400/18 to-transparent shadow-md shadow-emerald-500/20"
+                    : "bg-gradient-to-br from-emerald-600/30 via-emerald-500/22 to-transparent shadow-md shadow-emerald-600/20";
                   return (
                     <div
                       key={key}
@@ -1017,7 +1019,7 @@ const Dashboard = () => {
                         <p className="text-2xl font-bold text-foreground mt-1">
                           ${(planPriceOverrides[key] ?? plan.price).toLocaleString()}
                           <span className="text-sm font-normal text-muted-foreground">
-                            {isEnterprise ? " one-time" : "/mo"}
+                            {` ${plan.period_label ?? (isEnterprise ? "one-time" : "/mo")}`}
                           </span>
                         </p>
                       </div>
@@ -1097,7 +1099,7 @@ const Dashboard = () => {
                                       throw new Error("Payment service auth is unavailable. Please sign out/in, then retry.");
                                     }
                                     const data = await callEdgeFunction<{ orderId?: string }>(
-                                      "create-paypal-checkout",
+                                      "create-realestate-paypal-checkout",
                                       { planKey: key }
                                     );
                                     if (!data?.orderId) {
@@ -1189,8 +1191,8 @@ const Dashboard = () => {
               )}
               <p className="text-xs text-muted-foreground">
                 {isLifetimeCode
-                  ? "Enter this code in SalesPortal Settings to unlock lifetime sync."
-                  : "Enter this code in SalesPortal Settings to unlock/continue sync for the next 30 days."}
+                  ? "Enter this code in your Real Estate integration settings to unlock lifetime access."
+                  : "Enter this code in your Real Estate integration settings to unlock/continue access for the next 30 days."}
               </p>
             </CardContent>
           </Card>
@@ -1251,7 +1253,7 @@ const Dashboard = () => {
                         <tr
                           key={inv.id}
                           className="cursor-pointer hover:bg-muted/50 transition-colors"
-                          onClick={() => navigate(`/invoice/${inv.id}`)}
+                          onClick={() => navigate(`/real-estate/invoice/${inv.id}`)}
                         >
                           <td className="py-3 text-foreground">{inv.description || "—"}</td>
                           <td className="py-3 text-muted-foreground">{new Date(inv.invoice_date).toLocaleDateString()}</td>
@@ -1272,7 +1274,7 @@ const Dashboard = () => {
                               size="icon"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                navigate(`/invoice/${inv.id}`);
+                                navigate(`/real-estate/invoice/${inv.id}`);
                               }}
                               title="View / Download PDF"
                             >
@@ -1293,4 +1295,4 @@ const Dashboard = () => {
   );
 };
 
-export default Dashboard;
+export default RealEstateDashboard;
