@@ -43,6 +43,16 @@ const SupportChatWidget = () => {
     loadSupportAddress();
   }, []);
 
+  useEffect(() => {
+    const handleOpenSupportChat = () => {
+      setSent(false);
+      setIsOpen(true);
+    };
+
+    window.addEventListener("support-chat:open", handleOpenSupportChat);
+    return () => window.removeEventListener("support-chat:open", handleOpenSupportChat);
+  }, []);
+
   const resetForm = () => {
     setQuestion("");
     setSent(false);

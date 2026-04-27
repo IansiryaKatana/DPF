@@ -492,20 +492,32 @@ const RealEstateLanding = () => {
                       <span className={i === 1 ? "text-[#101828]" : "text-white/90"}>Connected platform operations</span>
                     </li>
                   </ul>
-                  <Button
-                    variant={i === 1 ? "secondary" : "ghost"}
-                    className={`w-full justify-between rounded-xl ${
-                      i === 1
-                        ? "bg-[#101828] text-white hover:bg-[#1d2939]"
-                        : "border border-white/30 !bg-transparent !text-white !hover:bg-[#1d2939] !hover:text-white hover:border-white/50"
-                    }`}
-                    asChild
-                  >
-                    <Link to="/real-estate/register">
+                  {i === 2 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="w-full justify-between rounded-xl border border-white/30 !bg-transparent !text-white !hover:bg-[#1d2939] !hover:text-white hover:border-white/50"
+                      onClick={() => window.dispatchEvent(new Event("support-chat:open"))}
+                    >
                       {pricingCtas[i]}
                       <ArrowUpRight className="h-4 w-4" />
-                    </Link>
-                  </Button>
+                    </Button>
+                  ) : (
+                    <Button
+                      variant={i === 1 ? "secondary" : "ghost"}
+                      className={`w-full justify-between rounded-xl ${
+                        i === 1
+                          ? "bg-[#101828] text-white hover:bg-[#1d2939]"
+                          : "border border-white/30 !bg-transparent !text-white !hover:bg-[#1d2939] !hover:text-white hover:border-white/50"
+                      }`}
+                      asChild
+                    >
+                      <Link to="/real-estate/register">
+                        {pricingCtas[i]}
+                        <ArrowUpRight className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                  )}
                 </motion.article>
               ))}
             </div>

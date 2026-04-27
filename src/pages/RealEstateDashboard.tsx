@@ -713,6 +713,15 @@ const RealEstateDashboard = () => {
     : accessCodeExpiryLabel
     ? `Current plan is active until ${accessCodeExpiryLabel}.`
     : "Current plan is active. Additional purchases are disabled.";
+  const getPlanPeriodLabel = (planKey: RealEstatePlanKey) => {
+    const raw = REALESTATE_PLANS[planKey].period_label;
+    if (!raw) return REALESTATE_PLANS[planKey].billing_type === "one_time" ? "one-time" : "/month";
+    if (raw.startsWith("/")) return raw;
+    if (raw === "one-time") return "one-time";
+    return `/${raw}`;
+  };
+  const getPlanDisplayPrice = (planKey: RealEstatePlanKey) =>
+    planPriceOverrides[planKey] ?? REALESTATE_PLANS[planKey].price;
   const accessCodeSeverityClass =
     accessCodeRemainingMs <= 3 * 24 * 60 * 60 * 1000
       ? "bg-gradient-to-r from-[#4a1212] via-[#7a1f1f] to-[#b73232]"
@@ -944,9 +953,9 @@ const RealEstateDashboard = () => {
                         </Badge>
                       </div>
                       <p className="text-3xl font-bold text-foreground">
-                        ${REALESTATE_PLANS[paidPlanKey].price.toLocaleString()}
+                        ${getPlanDisplayPrice(paidPlanKey).toLocaleString()}
                         <span className="text-sm font-normal text-muted-foreground">
-                          {REALESTATE_PLANS[paidPlanKey].billing_type === "one_time" ? " one-time" : "/month"}
+                          {` ${getPlanPeriodLabel(paidPlanKey)}`}
                         </span>
                       </p>
                       <div className="mt-2 space-y-1">
