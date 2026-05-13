@@ -129,6 +129,7 @@ serve(async (req) => {
       metadata: {
         userId: userData.user.id,
         planKey,
+        productLine: "shopify",
         platform: "DataPulseFlow",
         requested_currency: "USD",
         requested_amount_usd: planAmountUsd,

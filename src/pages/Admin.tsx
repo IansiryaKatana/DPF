@@ -48,6 +48,8 @@ const Admin = () => {
     secretKey: "",
   });
   const [paystackChargeCurrency, setPaystackChargeCurrency] = useState<"KES" | "USD">("KES");
+  /** Cached Paystack Plan codes for Shopify subscription checkout (`PLN_…`). Leave blank to auto-create on next subscribe. */
+  const [paystackSubscriptionPlanCodes, setPaystackSubscriptionPlanCodes] = useState({ growth: "", pro: "" });
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [uploadingDeliverable, setUploadingDeliverable] = useState(false);
@@ -104,6 +106,12 @@ const Admin = () => {
           if (s.setting_key === "paystack_secret_key") setPaystack(prev => ({ ...prev, secretKey: s.setting_value || "" }));
           if (s.setting_key === "paystack_charge_currency") {
             setPaystackChargeCurrency(String(s.setting_value || "KES").toUpperCase() === "USD" ? "USD" : "KES");
+          }
+          if (s.setting_key === "paystack_plan_code_shopify_growth") {
+            setPaystackSubscriptionPlanCodes((prev) => ({ ...prev, growth: s.setting_value || "" }));
+          }
+          if (s.setting_key === "paystack_plan_code_shopify_pro") {
+            setPaystackSubscriptionPlanCodes((prev) => ({ ...prev, pro: s.setting_value || "" }));
           }
           if (s.setting_key === "client_deliverable_zip_url") setClientDeliverableZipUrl(s.setting_value || "");
           if (s.setting_key === "plan_price_growth") setPlanPricing(prev => ({ ...prev, growth: s.setting_value || prev.growth }));
@@ -202,6 +210,30 @@ const Admin = () => {
   };
 
   const toggleSecret = (key: string) => setShowSecrets(prev => ({ ...prev, [key]: !prev[key] }));
+
+  const normalizePaystackPlanCode = (raw: string, fieldLabel: string) => {
+    const t = raw.trim();
+    if (!t) return "";
+    if (!/^PLN_[0-9a-z]+$/i.test(t)) {
+      throw new Error(`${fieldLabel} must be a Paystack plan code like PLN_xxxx (check Paystack Dashboard → Plans).`);
+    }
+    return t;
+  };
+
+  const handleSavePaystackSubscriptionPlanCodes = async () => {
+    setSaving(true);
+    try {
+      const growth = normalizePaystackPlanCode(paystackSubscriptionPlanCodes.growth, "Growth plan code");
+      const pro = normalizePaystackPlanCode(paystackSubscriptionPlanCodes.pro, "Pro plan code");
+      await saveSetting("paystack_plan_code_shopify_growth", growth, false);
+      await saveSetting("paystack_plan_code_shopify_pro", pro, false);
+      toast.success("Shopify Paystack subscription plan codes saved.");
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to save plan codes.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleSavePlanPricing = async () => {
     setSaving(true);
@@ -591,6 +623,48 @@ const Admin = () => {
                     <Save className="w-4 h-4 mr-2" />
                     {saving ? "Saving..." : "Save Paystack Credentials"}
                   </Button>
+
+                  <div className="border-t border-border pt-4 mt-4 space-y-4">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Shopify — Paystack subscription plans</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Optional <span className="font-mono">PLN_</span> codes from Paystack (Plans). If empty, the next
+                        customer subscription checkout creates plans and fills these automatically. Update here when you
+                        change plans in Paystack or want checkout to use a specific plan. Amount, currency, and interval
+                        must still match your plan pricing and charge currency or checkout will create a new plan.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="paystack-plan-shopify-growth">Growth (monthly) — plan code</Label>
+                        <Input
+                          id="paystack-plan-shopify-growth"
+                          value={paystackSubscriptionPlanCodes.growth}
+                          onChange={(e) =>
+                            setPaystackSubscriptionPlanCodes((prev) => ({ ...prev, growth: e.target.value }))
+                          }
+                          placeholder="PLN_… (optional)"
+                          className="font-mono text-sm"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="paystack-plan-shopify-pro">Pro (monthly) — plan code</Label>
+                        <Input
+                          id="paystack-plan-shopify-pro"
+                          value={paystackSubscriptionPlanCodes.pro}
+                          onChange={(e) =>
+                            setPaystackSubscriptionPlanCodes((prev) => ({ ...prev, pro: e.target.value }))
+                          }
+                          placeholder="PLN_… (optional)"
+                          className="font-mono text-sm"
+                        />
+                      </div>
+                    </div>
+                    <Button type="button" variant="secondary" onClick={handleSavePaystackSubscriptionPlanCodes} disabled={saving}>
+                      <Save className="w-4 h-4 mr-2" />
+                      {saving ? "Saving..." : "Save subscription plan codes"}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
 

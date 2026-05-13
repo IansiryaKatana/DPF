@@ -8,9 +8,23 @@ const corsHeaders = {
 };
 
 const PLAN_PRICES_USD: Record<string, number> = {
-  growth: 499,
-  pro: 4790,
-  enterprise: 14000,
+  growth: 500,
+  pro: 700,
+};
+
+const PAYSTACK_PLAN_SETTING_KEYS: Record<string, string> = {
+  growth: "paystack_plan_code_shopify_growth",
+  pro: "paystack_plan_code_shopify_pro",
+};
+
+/** Paystack metadata values must be strings; omit null/undefined. */
+const stringifyMetadata = (fields: Record<string, unknown>): Record<string, string> => {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    if (v === null || v === undefined) continue;
+    out[k] = typeof v === "string" ? v : String(v);
+  }
+  return out;
 };
 
 const getUsdToKesRate = async (fallbackRate: number | null): Promise<{ rate: number; source: string }> => {
@@ -40,6 +54,79 @@ const getUsdToKesRate = async (fallbackRate: number | null): Promise<{ rate: num
   }
 };
 
+const ensurePaystackPlanCode = async (params: {
+  supabase: ReturnType<typeof createClient>;
+  paystackSecret: string;
+  planSettingKey: string;
+  amountMinorUnits: number;
+  currency: string;
+  interval: string;
+  planDisplayName: string;
+}): Promise<string> => {
+  const { supabase, paystackSecret, planSettingKey, amountMinorUnits, currency, interval, planDisplayName } = params;
+
+  const { data: row } = await supabase
+    .from("admin_settings")
+    .select("setting_value")
+    .eq("setting_key", planSettingKey)
+    .maybeSingle();
+
+  const existingCode = String(row?.setting_value ?? "").trim();
+  if (existingCode) {
+    const fetchRes = await fetch(`https://api.paystack.co/plan/${encodeURIComponent(existingCode)}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${paystackSecret}`,
+        "Content-Type": "application/json",
+      },
+    });
+    const fetchJson = await fetchRes.json();
+    if (fetchRes.ok && fetchJson?.status && fetchJson?.data) {
+      const p = fetchJson.data;
+      const sameAmount = Number(p.amount) === amountMinorUnits;
+      const sameCurrency = String(p.currency || "").toUpperCase() === currency.toUpperCase();
+      const sameInterval = String(p.interval || "") === interval;
+      if (sameAmount && sameCurrency && sameInterval) {
+        return existingCode;
+      }
+    }
+  }
+
+  const createRes = await fetch("https://api.paystack.co/plan", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${paystackSecret}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: planDisplayName.slice(0, 100),
+      amount: amountMinorUnits,
+      interval,
+      currency,
+      description: "DataPulseFlow Shopify subscription",
+    }),
+  });
+  const createJson = await createRes.json();
+  if (!createRes.ok || !createJson?.status || !createJson?.data?.plan_code) {
+    throw new Error(`Paystack plan create failed (${createRes.status}): ${createJson?.message || "unknown error"}`);
+  }
+  const newCode = createJson.data.plan_code as string;
+
+  const { error: upsertError } = await supabase.from("admin_settings").upsert(
+    {
+      setting_key: planSettingKey,
+      setting_value: newCode,
+      is_encrypted: false,
+    },
+    { onConflict: "setting_key" },
+  );
+  if (upsertError) {
+    throw new Error(`Failed to store Paystack plan code: ${upsertError.message}`);
+  }
+
+  return newCode;
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -49,7 +136,7 @@ serve(async (req) => {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-      { auth: { persistSession: false } }
+      { auth: { persistSession: false } },
     );
 
     const authHeader = req.headers.get("Authorization");
@@ -59,8 +146,16 @@ serve(async (req) => {
     if (userError) throw new Error(`Authentication error: ${userError.message}`);
     if (!userData.user?.email) throw new Error("User not authenticated");
 
-    const { planKey } = await req.json();
-    if (!planKey || !PLAN_PRICES_USD[planKey]) throw new Error("Invalid plan");
+    let body: { planKey?: string } = {};
+    try {
+      body = await req.json();
+    } catch {
+      throw new Error("Request body must be valid JSON with planKey.");
+    }
+    const planKey = String(body?.planKey ?? "").trim();
+    if (!planKey || !PLAN_PRICES_USD[planKey]) {
+      throw new Error("Invalid plan for subscription (only growth and pro).");
+    }
 
     const { data: settings, error: settingsError } = await supabase
       .from("admin_settings")
@@ -69,14 +164,14 @@ serve(async (req) => {
         "paystack_secret_key",
         "paystack_charge_currency",
         "usd_kes_rate",
-        "realestate_plan_price_growth",
-        "realestate_plan_price_pro",
-        "realestate_plan_price_enterprise",
+        "plan_price_growth",
+        "plan_price_pro",
+        PAYSTACK_PLAN_SETTING_KEYS[planKey as keyof typeof PAYSTACK_PLAN_SETTING_KEYS],
       ]);
 
     if (settingsError) throw new Error(`Failed to load Paystack settings: ${settingsError.message}`);
     const paystackSecret = String(
-      settings?.find((s) => s.setting_key === "paystack_secret_key")?.setting_value ?? ""
+      settings?.find((s) => s.setting_key === "paystack_secret_key")?.setting_value ?? "",
     ).trim();
     if (!paystackSecret) throw new Error("Paystack secret key is missing in admin settings");
     if (!/^sk_(test|live)_/i.test(paystackSecret)) {
@@ -88,15 +183,14 @@ serve(async (req) => {
       return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
     };
     const resolvedPlanPrices: Record<string, number> = {
-      growth: parsePlanPrice(settings?.find((s) => s.setting_key === "realestate_plan_price_growth")?.setting_value, PLAN_PRICES_USD.growth),
-      pro: parsePlanPrice(settings?.find((s) => s.setting_key === "realestate_plan_price_pro")?.setting_value, PLAN_PRICES_USD.pro),
-      enterprise: parsePlanPrice(settings?.find((s) => s.setting_key === "realestate_plan_price_enterprise")?.setting_value, PLAN_PRICES_USD.enterprise),
+      growth: parsePlanPrice(settings?.find((s) => s.setting_key === "plan_price_growth")?.setting_value, 500),
+      pro: parsePlanPrice(settings?.find((s) => s.setting_key === "plan_price_pro")?.setting_value, 700),
     };
     const fallbackFxRate = parsePlanPrice(
       settings?.find((s) => s.setting_key === "usd_kes_rate")?.setting_value,
       0,
     );
-    const planAmountUsd = resolvedPlanPrices[planKey];
+    const planAmountUsd = resolvedPlanPrices[planKey as keyof typeof resolvedPlanPrices];
     const configuredCurrency = String(
       settings?.find((s) => s.setting_key === "paystack_charge_currency")?.setting_value ?? "KES",
     ).toUpperCase();
@@ -117,34 +211,50 @@ serve(async (req) => {
       amountInMinorUnits = Math.round(planAmountKes * 100);
       chargedAmount = planAmountKes;
     }
+
+    const planCodeSetting = PAYSTACK_PLAN_SETTING_KEYS[planKey as keyof typeof PAYSTACK_PLAN_SETTING_KEYS];
+    const planDisplayName = `DataPulseFlow Shopify ${planKey === "growth" ? "Growth" : "Pro"} (${chargeCurrency})`;
+    const paystackPlanCode = await ensurePaystackPlanCode({
+      supabase,
+      paystackSecret,
+      planSettingKey: planCodeSetting,
+      amountMinorUnits: amountInMinorUnits,
+      currency: chargeCurrency,
+      interval: "monthly",
+      planDisplayName,
+    });
+
     const origin = req.headers.get("origin") || "http://localhost:8081";
     const isLocalOrigin = /localhost|127\.0\.0\.1/i.test(origin);
-    const reference = `DPF_${userData.user.id}_${planKey}_${Date.now()}`;
+    const reference = `DPF_SUB_${userData.user.id}_${planKey}_${Date.now()}`;
+
+    const metadata = stringifyMetadata({
+      userId: userData.user.id,
+      planKey,
+      productLine: "shopify",
+      billing: "subscription",
+      platform: "DataPulseFlow",
+      requested_currency: "USD",
+      requested_amount_usd: planAmountUsd,
+      charged_currency: chargeCurrency,
+      charged_amount: chargedAmount,
+      ...(chargeCurrency === "KES" ? { charged_amount_kes: chargedAmount } : {}),
+      ...(usdToKesRate != null ? { usd_to_kes_rate: usdToKesRate } : {}),
+      fx_source: fxSource,
+    });
 
     const payload: Record<string, unknown> = {
       email: userData.user.email,
       amount: amountInMinorUnits,
-      currency: chargeCurrency,
+      plan: paystackPlanCode,
       reference,
-      metadata: {
-        userId: userData.user.id,
-        planKey,
-        productLine: "realestate",
-        platform: "DataPulseFlow-RealEstate",
-        requested_currency: "USD",
-        requested_amount_usd: planAmountUsd,
-        charged_currency: chargeCurrency,
-        charged_amount: chargedAmount,
-        charged_amount_kes: chargeCurrency === "KES" ? chargedAmount : null,
-        usd_to_kes_rate: usdToKesRate,
-        fx_source: fxSource,
-      },
+      metadata,
     };
     if (!isLocalOrigin && /^sk_test_/i.test(paystackSecret)) {
       throw new Error("Production checkout is using a Paystack test secret key. Switch admin setting to sk_live_*.");
     }
     if (!isLocalOrigin) {
-      payload.callback_url = `${origin}/real-estate/dashboard?checkout=paystack-success`;
+      payload.callback_url = `${origin}/dashboard?checkout=paystack-success`;
     }
 
     const initRes = await fetch("https://api.paystack.co/transaction/initialize", {
@@ -159,7 +269,7 @@ serve(async (req) => {
     const initJson = await initRes.json();
     if (!initRes.ok || !initJson?.status || !initJson?.data?.authorization_url) {
       throw new Error(
-        `Paystack initialize failed (${initRes.status}): ${initJson?.message || "unknown error"}`
+        `Paystack initialize failed (${initRes.status}): ${initJson?.message || "unknown error"}`,
       );
     }
 
@@ -173,14 +283,16 @@ serve(async (req) => {
         key_mode: /^sk_live_/i.test(paystackSecret) ? "live" : "test",
         display_currency: "USD",
         display_amount: planAmountUsd,
+        billing: "subscription",
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
-      }
+      },
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    console.error("[create-paystack-subscription-checkout]", message);
     return new Response(JSON.stringify({ error: message }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 500,

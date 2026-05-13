@@ -84,6 +84,7 @@ export type Database = {
           expires_at: string
           id: string
           issued_at: string
+          paystack_subscription_code: string | null
           plan: string
           redeemed_at: string | null
           status: string
@@ -95,6 +96,7 @@ export type Database = {
           expires_at: string
           id?: string
           issued_at?: string
+          paystack_subscription_code?: string | null
           plan?: string
           redeemed_at?: string | null
           status?: string
@@ -106,6 +108,7 @@ export type Database = {
           expires_at?: string
           id?: string
           issued_at?: string
+          paystack_subscription_code?: string | null
           plan?: string
           redeemed_at?: string | null
           status?: string
@@ -302,6 +305,7 @@ export type Database = {
           expires_at: string
           id: string
           issued_at: string
+          paystack_subscription_code: string | null
           plan: string
           redeemed_at: string | null
           status: string
@@ -313,6 +317,7 @@ export type Database = {
           expires_at: string
           id?: string
           issued_at?: string
+          paystack_subscription_code?: string | null
           plan?: string
           redeemed_at?: string | null
           status?: string
@@ -324,6 +329,7 @@ export type Database = {
           expires_at?: string
           id?: string
           issued_at?: string
+          paystack_subscription_code?: string | null
           plan?: string
           redeemed_at?: string | null
           status?: string
@@ -379,6 +385,9 @@ export type Database = {
           current_period_end: string | null
           current_period_start: string | null
           id: string
+          paystack_customer_code: string | null
+          paystack_non_renewing: boolean
+          paystack_subscription_code: string | null
           plan: string
           status: string
           stripe_customer_id: string | null
@@ -393,6 +402,9 @@ export type Database = {
           current_period_end?: string | null
           current_period_start?: string | null
           id?: string
+          paystack_customer_code?: string | null
+          paystack_non_renewing?: boolean
+          paystack_subscription_code?: string | null
           plan?: string
           status?: string
           stripe_customer_id?: string | null
@@ -407,6 +419,9 @@ export type Database = {
           current_period_end?: string | null
           current_period_start?: string | null
           id?: string
+          paystack_customer_code?: string | null
+          paystack_non_renewing?: boolean
+          paystack_subscription_code?: string | null
           plan?: string
           status?: string
           stripe_customer_id?: string | null
@@ -416,9 +431,6 @@ export type Database = {
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
-      }
-      realestate_user_profile: {
         Row: {
           company_name: string | null
           created_at: string
@@ -448,6 +460,9 @@ export type Database = {
           current_period_end: string | null
           current_period_start: string | null
           id: string
+          paystack_customer_code: string | null
+          paystack_non_renewing: boolean
+          paystack_subscription_code: string | null
           plan: string
           status: string
           stripe_customer_id: string | null
@@ -462,6 +477,9 @@ export type Database = {
           current_period_end?: string | null
           current_period_start?: string | null
           id?: string
+          paystack_customer_code?: string | null
+          paystack_non_renewing?: boolean
+          paystack_subscription_code?: string | null
           plan?: string
           status?: string
           stripe_customer_id?: string | null
@@ -476,6 +494,9 @@ export type Database = {
           current_period_end?: string | null
           current_period_start?: string | null
           id?: string
+          paystack_customer_code?: string | null
+          paystack_non_renewing?: boolean
+          paystack_subscription_code?: string | null
           plan?: string
           status?: string
           stripe_customer_id?: string | null

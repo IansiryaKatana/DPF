@@ -16,13 +16,14 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { PayPalButtons, PayPalScriptProvider } from "@paypal/react-paypal-js";
 import {
   CreditCard, Key, FileText, ArrowUpRight, Clock, CheckCircle, AlertTriangle,
-  Activity, Shield, Zap, BarChart3, ExternalLink, Download
+  Activity, Shield, Zap, BarChart3, ExternalLink, Download, Info
 } from "lucide-react";
 
 declare global {
@@ -102,6 +103,10 @@ const Dashboard = () => {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [profile, setProfile] = useState<any>(null);
   const [checkingOut, setCheckingOut] = useState<string | null>(null);
+  /** Paystack one-time vs subscription inline checkout loading (Stripe/PayPal still use `checkingOut`). */
+  const [paystackLoading, setPaystackLoading] = useState<
+    { mode: "one_time" | "subscription"; planKey: PlanKey } | null
+  >(null);
   const [managingBilling, setManagingBilling] = useState(false);
   const [demoApproved, setDemoApproved] = useState<boolean | null>(null);
   const [activePaymentMethod, setActivePaymentMethod] = useState<string>("stripe");
@@ -368,7 +373,7 @@ const Dashboard = () => {
   };
 
   const handlePaystackCheckout = async (planKey: PlanKey) => {
-    setCheckingOut(planKey);
+    setPaystackLoading({ mode: "one_time", planKey });
     let hostedUrl = "";
     try {
       if (!session) throw new Error("Please sign in again.");
@@ -432,7 +437,76 @@ const Dashboard = () => {
       }
       toast.error("Failed to start Paystack checkout: " + (error.message || "Unknown error"));
     } finally {
-      setCheckingOut(null);
+      setPaystackLoading(null);
+    }
+  };
+
+  const handlePaystackSubscriptionCheckout = async (planKey: PlanKey) => {
+    setPaystackLoading({ mode: "subscription", planKey });
+    let hostedUrl = "";
+    try {
+      if (!session) throw new Error("Please sign in again.");
+      if (!paystackPublicKey) throw new Error("Paystack public key is not configured.");
+
+      const data = await callEdgeFunction<{
+        access_code?: string;
+        reference?: string;
+        authorization_url?: string;
+        amount_minor_units?: number;
+        charge_currency?: string;
+        key_mode?: "live" | "test";
+      }>("create-paystack-subscription-checkout", { planKey });
+      hostedUrl = data.authorization_url || "";
+
+      if (!data?.access_code) {
+        throw new Error("Paystack access code not returned.");
+      }
+      if (!/^pk_(test|live)_/i.test(paystackPublicKey)) {
+        toast.error("Paystack public key is invalid. Expected pk_test_* or pk_live_*.");
+        if (hostedUrl) window.open(hostedUrl, "_blank");
+        return;
+      }
+      if (data.key_mode && !paystackPublicKey.toLowerCase().startsWith(`pk_${data.key_mode}_`)) {
+        toast.error(`Paystack key mode mismatch: secret is ${data.key_mode}, but public key is different.`);
+        if (hostedUrl) window.open(hostedUrl, "_blank");
+        return;
+      }
+
+      await ensurePaystackInlineScript();
+      if (!window.PaystackPop) throw new Error("Paystack inline checkout SDK not ready.");
+
+      window.PaystackPop
+        .setup({
+          key: paystackPublicKey,
+          email: profile?.email || user?.email || "",
+          access_code: data.access_code,
+          amount: data.amount_minor_units,
+          currency: data.charge_currency || "KES",
+          ref: data.reference,
+          callback: (response) => {
+            const reference = response?.reference || data.reference;
+            if (!reference) {
+              toast.error("Paystack reference missing after payment.");
+              return;
+            }
+            void handlePaystackVerification(reference);
+          },
+          onClose: () => {
+            toast.info("Paystack payment popup closed.");
+          },
+        })
+        .openIframe();
+    } catch (error: any) {
+      if (error?.message?.includes("status code 400")) {
+        toast.error("Inline checkout failed in test mode. Falling back to hosted Paystack checkout.");
+        if (hostedUrl) {
+          window.open(hostedUrl, "_blank");
+          return;
+        }
+      }
+      toast.error("Failed to start Paystack subscription: " + (error.message || "Unknown error"));
+    } finally {
+      setPaystackLoading(null);
     }
   };
 
@@ -476,6 +550,19 @@ const Dashboard = () => {
       if (!session) throw new Error("Please sign in again.");
       if (activePaymentMethod === "paypal") {
         toast.info("PayPal billing changes are managed by support from the admin side.");
+        return;
+      }
+      if (activePaymentMethod === "paystack") {
+        if (subscription?.paystack_subscription_code) {
+          const data = await callEdgeFunction<{ url?: string }>("paystack-subscription-manage-link", {
+            productLine: "shopify",
+          });
+          if (data?.url) window.open(data.url, "_blank");
+        } else {
+          toast.info(
+            "Paystack one-time purchases do not have a self-serve billing portal. Contact support to change payment or purchase again.",
+          );
+        }
         return;
       }
       const data = await callEdgeFunction<{ url?: string }>("customer-portal");
@@ -527,17 +614,20 @@ const Dashboard = () => {
     try {
       if (!session) throw new Error("Please sign in again.");
       setIsProcessingPayPalPayment(true);
-      const data = await callEdgeFunction<{ status?: string; accessCode?: string }>(
+      const data = await callEdgeFunction<{ status?: string; accessCode?: string; billing?: string }>(
         "verify-paystack-payment",
         { reference },
       );
       if (data?.status === "COMPLETED") {
+        const isSub = data?.billing === "paystack_subscription";
         setPaymentSuccessDialog({
           open: true,
           title: "Payment completed successfully",
-          message: data?.accessCode
-            ? "Your payment is confirmed and your new 30-day access code is ready."
-            : "Your payment is confirmed.",
+          message: isSub
+            ? "Your Paystack subscription is active. Each successful renewal extends your access code automatically."
+            : data?.accessCode
+              ? "Your payment is confirmed and your new 30-day access code is ready."
+              : "Your payment is confirmed.",
           accessCode: data?.accessCode,
         });
         const [{ data: subData }, { data: invData }] = await Promise.all([
@@ -666,7 +756,7 @@ const Dashboard = () => {
   );
   const hasPaidAccessState =
     isSubscribed ||
-    (hasActiveAccessCode && subStatus !== "trialing") ||
+    hasActiveAccessCode ||
     Boolean(currentPlan && subStatus !== "trialing") ||
     Boolean(
       subscription?.plan &&
@@ -707,7 +797,7 @@ const Dashboard = () => {
   const accessCodeExpiryLabel = latestAccessCode?.expires_at
     ? new Date(latestAccessCode.expires_at).toLocaleString()
     : null;
-  const planPurchasesLocked = hasActiveAccessCode && subStatus !== "trialing";
+  const planPurchasesLocked = hasActiveAccessCode;
   const purchaseLockMessage = isLifetimeCode
     ? "Lifetime plan is active. Additional purchases are disabled."
     : accessCodeExpiryLabel
@@ -958,6 +1048,13 @@ const Dashboard = () => {
                             Recurring billing runs on PayPal’s schedule; renewals appear in your invoices when synced.
                           </p>
                         )}
+                        {PLANS[paidPlanKey].billing_type === "recurring" &&
+                          activePaymentMethod === "paystack" &&
+                          subscription?.paystack_subscription_code && (
+                          <p className="text-xs text-muted-foreground">
+                            Paystack auto-charges on schedule; successful renewals extend your access code. Manage card or cancel from Manage Billing.
+                          </p>
+                        )}
                         <p className="text-sm text-muted-foreground">
                           Payment method: {activePaymentMethod === "stripe" ? "Card (Stripe)" : activePaymentMethod === "paypal" ? "Card (PayPal)" : "Card (Paystack)"}
                         </p>
@@ -969,7 +1066,8 @@ const Dashboard = () => {
                       onClick={handleManageBilling}
                       disabled={
                         managingBilling ||
-                        activePaymentMethod === "paypal"
+                        activePaymentMethod === "paypal" ||
+                        (activePaymentMethod === "paystack" && !subscription?.paystack_subscription_code)
                       }
                     >
                       <ExternalLink className="w-4 h-4 mr-2" />
@@ -977,6 +1075,8 @@ const Dashboard = () => {
                         ? "Loading..."
                         : activePaymentMethod === "paypal"
                         ? "Managed by Support"
+                        : activePaymentMethod === "paystack" && !subscription?.paystack_subscription_code
+                        ? "Paystack one-time"
                         : "Manage Billing"}
                     </Button>
                   </div>
@@ -1047,26 +1147,60 @@ const Dashboard = () => {
                         )}
 
                         {activePaymentMethod === "paystack" && (
-                          <Button
-                            variant={isCurrent ? "outline" : "hero"}
-                            size="sm"
-                            className={`w-full rounded-md py-6 px-4 justify-between ${
-                              isLockedForPurchase
-                                ? "bg-gradient-to-r from-[#5a1717] via-[#7f1d1d] to-[#991b1b] text-white hover:from-[#5a1717] hover:via-[#7f1d1d] hover:to-[#991b1b]"
-                                : ""
-                            }`}
-                            onClick={() => handlePaystackCheckout(key)}
-                            disabled={checkingOut === key || isCurrent || isLockedForPurchase}
-                          >
-                            {isCurrent
-                              ? "Current"
-                              : isLockedForPurchase
-                              ? "Locked until expiry"
-                              : checkingOut === key
-                              ? "Starting secure checkout..."
-                              : "Pay with Debit or Credit Card"}
-                            <CreditCard className="w-4 h-4 ml-2" />
-                          </Button>
+                          <div className="flex flex-col gap-2 w-full">
+                            {!isEnterprise && plan.billing_type === "recurring" && (
+                              <Button
+                                variant="hero"
+                                size="sm"
+                                className={`w-full rounded-md py-6 px-4 justify-between ${
+                                  isLockedForPurchase
+                                    ? "bg-gradient-to-r from-[#5a1717] via-[#7f1d1d] to-[#991b1b] text-white hover:from-[#5a1717] hover:via-[#7f1d1d] hover:to-[#991b1b]"
+                                    : ""
+                                }`}
+                                onClick={() => handlePaystackSubscriptionCheckout(key)}
+                                disabled={
+                                  (paystackLoading?.planKey === key && !!paystackLoading) ||
+                                  isCurrent ||
+                                  isLockedForPurchase
+                                }
+                              >
+                                {isCurrent
+                                  ? "Current"
+                                  : isLockedForPurchase
+                                    ? "Locked until expiry"
+                                    : paystackLoading?.planKey === key && paystackLoading.mode === "subscription"
+                                      ? "Starting subscription checkout..."
+                                      : "Subscribe (auto-renew)"}
+                                <CreditCard className="w-4 h-4 ml-2" />
+                              </Button>
+                            )}
+                            <Button
+                              variant={!isEnterprise && plan.billing_type === "recurring" ? "outline" : "hero"}
+                              size="sm"
+                              className={`w-full rounded-md py-6 px-4 justify-between ${
+                                isLockedForPurchase
+                                  ? "bg-gradient-to-r from-[#5a1717] via-[#7f1d1d] to-[#991b1b] text-white hover:from-[#5a1717] hover:via-[#7f1d1d] hover:to-[#991b1b]"
+                                  : ""
+                              }`}
+                              onClick={() => handlePaystackCheckout(key)}
+                              disabled={
+                                (paystackLoading?.planKey === key && !!paystackLoading) ||
+                                isCurrent ||
+                                isLockedForPurchase
+                              }
+                            >
+                              {isCurrent
+                                ? "Current"
+                                : isLockedForPurchase
+                                  ? "Locked until expiry"
+                                  : paystackLoading?.planKey === key && paystackLoading.mode === "one_time"
+                                    ? "Starting secure checkout..."
+                                    : isEnterprise
+                                      ? "Pay with Debit or Credit Card"
+                                      : "Pay one-time (30-day access)"}
+                              <CreditCard className="w-4 h-4 ml-2" />
+                            </Button>
+                          </div>
                         )}
 
                         {activePaymentMethod === "paypal" && !isCurrent && (
@@ -1150,9 +1284,32 @@ const Dashboard = () => {
                 })}
               </div>
 
-              <p className="text-xs text-muted-foreground mt-4 text-center">
-                Every plan is one-time and issues a 30-day access code.
-              </p>
+              <div className="mt-4 flex justify-center px-2">
+                {activePaymentMethod === "paystack" ? (
+                  <div className="flex justify-center">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="inline-flex shrink-0 rounded-full p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                          aria-label="Paystack: Subscribe vs Pay one-time (same first screen; different after first charge)"
+                        >
+                          <Info className="h-3.5 w-3.5" aria-hidden />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-[min(22rem,calc(100vw-2rem))] text-xs leading-relaxed">
+                        The Paystack card screen looks the same for Subscribe and Pay one-time—it always collects a card for the first charge. Subscribe creates a Paystack subscription: your card stays on file and Paystack charges each billing period; each successful renewal extends your access code automatically.
+                        {" "}
+                        Pay one-time is a single debit for 30 days of access—no further Paystack charges. Enterprise is one payment for lifetime access.
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground text-center max-w-md">
+                    Growth and Pro follow your provider’s billing (e.g. Stripe subscription or PayPal as configured). Enterprise is a one-time lifetime purchase.
+                  </p>
+                )}
+              </div>
               {functionsErrorMessage && (
                 <p className="text-xs text-destructive mt-2 text-center">{functionsErrorMessage}</p>
               )}

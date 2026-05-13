@@ -48,6 +48,8 @@ const RealEstateAdmin = () => {
     secretKey: "",
   });
   const [paystackChargeCurrency, setPaystackChargeCurrency] = useState<"KES" | "USD">("KES");
+  /** Cached Paystack Plan codes for Real Estate subscription checkout (`PLN_…`). */
+  const [paystackSubscriptionPlanCodes, setPaystackSubscriptionPlanCodes] = useState({ growth: "", pro: "" });
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [uploadingDeliverable, setUploadingDeliverable] = useState(false);
@@ -110,6 +112,12 @@ const RealEstateAdmin = () => {
           if (s.setting_key === "paystack_secret_key") setPaystack(prev => ({ ...prev, secretKey: s.setting_value || "" }));
           if (s.setting_key === "paystack_charge_currency") {
             setPaystackChargeCurrency(String(s.setting_value || "KES").toUpperCase() === "USD" ? "USD" : "KES");
+          }
+          if (s.setting_key === "paystack_plan_code_realestate_growth") {
+            setPaystackSubscriptionPlanCodes((prev) => ({ ...prev, growth: s.setting_value || "" }));
+          }
+          if (s.setting_key === "paystack_plan_code_realestate_pro") {
+            setPaystackSubscriptionPlanCodes((prev) => ({ ...prev, pro: s.setting_value || "" }));
           }
           if (s.setting_key === "realestate_client_deliverable_zip_url") setClientDeliverableZipUrl(s.setting_value || "");
           if (s.setting_key === "realestate_plan_price_growth") setPlanPricing(prev => ({ ...prev, growth: s.setting_value || prev.growth }));
@@ -208,6 +216,30 @@ const RealEstateAdmin = () => {
       );
     } catch (error: any) {
       toast.error("Failed to save: " + (error.message || "Unknown error"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const normalizePaystackPlanCode = (raw: string, fieldLabel: string) => {
+    const t = raw.trim();
+    if (!t) return "";
+    if (!/^PLN_[0-9a-z]+$/i.test(t)) {
+      throw new Error(`${fieldLabel} must be a Paystack plan code like PLN_xxxx (check Paystack Dashboard → Plans).`);
+    }
+    return t;
+  };
+
+  const handleSavePaystackSubscriptionPlanCodes = async () => {
+    setSaving(true);
+    try {
+      const growth = normalizePaystackPlanCode(paystackSubscriptionPlanCodes.growth, "Monthly plan code");
+      const pro = normalizePaystackPlanCode(paystackSubscriptionPlanCodes.pro, "Annual plan code");
+      await saveSetting("paystack_plan_code_realestate_growth", growth, false);
+      await saveSetting("paystack_plan_code_realestate_pro", pro, false);
+      toast.success("Real Estate Paystack subscription plan codes saved.");
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to save plan codes.");
     } finally {
       setSaving(false);
     }
@@ -604,6 +636,47 @@ const RealEstateAdmin = () => {
                     <Save className="w-4 h-4 mr-2" />
                     {saving ? "Saving..." : "Save Paystack Credentials"}
                   </Button>
+
+                  <div className="border-t border-border pt-4 mt-4 space-y-4">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Real Estate — Paystack subscription plans</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Optional <span className="font-mono">PLN_</span> codes from Paystack (Plans). Monthly uses a{" "}
+                        <span className="font-mono">monthly</span> interval; Annual uses <span className="font-mono">annually</span>.
+                        If empty, the next customer subscription checkout creates plans and fills these automatically.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="paystack-plan-re-growth">Monthly — plan code</Label>
+                        <Input
+                          id="paystack-plan-re-growth"
+                          value={paystackSubscriptionPlanCodes.growth}
+                          onChange={(e) =>
+                            setPaystackSubscriptionPlanCodes((prev) => ({ ...prev, growth: e.target.value }))
+                          }
+                          placeholder="PLN_… (optional)"
+                          className="font-mono text-sm"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="paystack-plan-re-pro">Annual — plan code</Label>
+                        <Input
+                          id="paystack-plan-re-pro"
+                          value={paystackSubscriptionPlanCodes.pro}
+                          onChange={(e) =>
+                            setPaystackSubscriptionPlanCodes((prev) => ({ ...prev, pro: e.target.value }))
+                          }
+                          placeholder="PLN_… (optional)"
+                          className="font-mono text-sm"
+                        />
+                      </div>
+                    </div>
+                    <Button type="button" variant="secondary" onClick={handleSavePaystackSubscriptionPlanCodes} disabled={saving}>
+                      <Save className="w-4 h-4 mr-2" />
+                      {saving ? "Saving..." : "Save subscription plan codes"}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
 

@@ -27,5 +27,17 @@ verify_jwt = false
 [functions.verify-paystack-payment]
 verify_jwt = false
 
+[functions.create-paystack-subscription-checkout]
+verify_jwt = false
+
+[functions.create-realestate-paystack-subscription-checkout]
+verify_jwt = false
+
+[functions.paystack-webhook]
+verify_jwt = false
+
+[functions.paystack-subscription-manage-link]
+verify_jwt = false
+
 [functions.send-email]
 verify_jwt = false

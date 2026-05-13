@@ -1,10 +1,22 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
+import {
+  fulfillPaystackSubscriptionPayment,
+  invoiceAlreadyRecorded,
+  paymentHasPaystackPlan,
+} from "../_shared/paystack-subscription-fulfillment.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+};
+
+const invoiceKeys = (payment: Record<string, unknown>, reference: string): string[] => {
+  const keys: string[] = [];
+  if (payment.id != null) keys.push(`paystack:txn:${String(payment.id)}`);
+  if (reference) keys.push(`paystack:${reference}`);
+  return keys;
 };
 
 serve(async (req) => {
@@ -23,7 +35,7 @@ serve(async (req) => {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-      { auth: { persistSession: false } }
+      { auth: { persistSession: false } },
     );
 
     const authHeader = req.headers.get("Authorization");
@@ -57,19 +69,13 @@ serve(async (req) => {
       throw new Error(verifyJson?.message || "Failed to verify Paystack payment");
     }
 
-    const payment = verifyJson.data;
+    const payment = verifyJson.data as Record<string, unknown>;
     if (payment.status !== "success") {
       throw new Error("Paystack payment is not successful");
     }
 
-    const expectedInvoiceRef = `paystack:${reference}`;
-    const { data: existingInvoice } = await supabase
-      .from("realestate_invoices")
-      .select("id")
-      .eq("stripe_invoice_id", expectedInvoiceRef)
-      .maybeSingle();
-
-    if (existingInvoice?.id) {
+    const keys = invoiceKeys(payment, reference);
+    if (await invoiceAlreadyRecorded(supabase, "realestate_invoices", keys)) {
       return new Response(
         JSON.stringify({
           status: "COMPLETED",
@@ -79,11 +85,45 @@ serve(async (req) => {
         {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
           status: 200,
-        }
+        },
       );
     }
 
-    const plan = String(payment?.metadata?.planKey || "growth");
+    const meta =
+      payment.metadata && typeof payment.metadata === "object" ? (payment.metadata as Record<string, unknown>) : {};
+    const productLineMeta = String(meta.productLine ?? "").toLowerCase();
+    if (productLineMeta === "shopify") {
+      throw new Error("Use the Shopify dashboard to verify this payment.");
+    }
+
+    if (paymentHasPaystackPlan(payment)) {
+      const sub = await fulfillPaystackSubscriptionPayment({
+        supabase,
+        payment,
+        userId: userData.user.id,
+        productLine: "realestate",
+      });
+      if (sub.alreadyProcessed) {
+        return new Response(
+          JSON.stringify({ status: "COMPLETED", alreadyProcessed: true, reference }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          status: "COMPLETED",
+          reference,
+          plan: sub.plan,
+          lifetime: false,
+          accessCode: sub.accessCode,
+          accessCodeExpiresAt: sub.accessCodeExpiresAt,
+          billing: "paystack_subscription",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 },
+      );
+    }
+
+    const plan = String(meta.planKey || "growth");
     const nowIso = new Date().toISOString();
     const isEnterprise = plan === "enterprise";
     const periodEndIso = isEnterprise
@@ -111,11 +151,10 @@ serve(async (req) => {
       throw new Error(`Unexpected Paystack currency: ${paymentCurrency || "unknown"}`);
     }
 
-    const metadata = (payment.metadata && typeof payment.metadata === "object") ? payment.metadata : {};
-    const requestedAmountUsd = Number((metadata as Record<string, unknown>).requested_amount_usd);
-    const requestedCurrency = String((metadata as Record<string, unknown>).requested_currency || "USD").toUpperCase();
-    const chargedAmount = Number((metadata as Record<string, unknown>).charged_amount);
-    const chargedAmountKes = Number((metadata as Record<string, unknown>).charged_amount_kes);
+    const requestedAmountUsd = Number(meta.requested_amount_usd);
+    const requestedCurrency = String(meta.requested_currency || "USD").toUpperCase();
+    const chargedAmount = Number(meta.charged_amount);
+    const chargedAmountKes = Number(meta.charged_amount_kes);
     const paidAmount = Number(payment.amount || 0) / 100;
     const expectedChargedAmount = Number.isFinite(chargedAmount) && chargedAmount > 0
       ? chargedAmount
@@ -131,6 +170,9 @@ serve(async (req) => {
       : paidAmount;
     const currency = requestedCurrency || "USD";
 
+    const txnId = payment.id != null ? String(payment.id) : "";
+    const invoiceExternalId = txnId ? `paystack:txn:${txnId}` : `paystack:${reference}`;
+
     const { error: invoiceError } = await supabase.from("realestate_invoices").insert({
       user_id: userData.user.id,
       amount: amountValue,
@@ -140,7 +182,7 @@ serve(async (req) => {
       due_date: nowIso,
       status: "paid",
       paid_at: nowIso,
-      stripe_invoice_id: expectedInvoiceRef,
+      stripe_invoice_id: invoiceExternalId,
     });
     if (invoiceError) {
       throw new Error(`Failed to create invoice: ${invoiceError.message}`);
@@ -166,11 +208,12 @@ serve(async (req) => {
         lifetime: isEnterprise,
         accessCode,
         accessCodeExpiresAt: periodEndIso,
+        billing: "one_time",
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
-      }
+      },
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
