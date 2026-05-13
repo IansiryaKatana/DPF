@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { toast } from "sonner";
 
 const Login = () => {
@@ -39,18 +39,19 @@ const Login = () => {
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4">
       <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="flex items-center justify-center gap-2 mb-4">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <rect x="2" y="3" width="6" height="12" rx="1" fill="hsl(var(--primary-foreground))" />
-                <rect x="10" y="6" width="6" height="9" rx="1" fill="hsl(var(--primary-foreground))" opacity="0.7" />
-              </svg>
+        <CardHeader className="text-center space-y-0 px-6 pb-6 pt-12">
+          <div className="flex flex-col items-center gap-1.5">
+            <div className="flex items-center justify-center gap-2">
+              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                  <rect x="2" y="3" width="6" height="12" rx="1" fill="hsl(var(--primary-foreground))" />
+                  <rect x="10" y="6" width="6" height="9" rx="1" fill="hsl(var(--primary-foreground))" opacity="0.7" />
+                </svg>
+              </div>
+              <span className="text-xl font-serif-display text-foreground">DataPulseFlow</span>
             </div>
-            <span className="text-xl font-serif-display text-foreground">DataPulseFlow</span>
+            <CardDescription>Sign in to your DataPulseFlow account</CardDescription>
           </div>
-          <CardTitle className="text-2xl">Welcome Back</CardTitle>
-          <CardDescription>Sign in to your DataPulseFlow account</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">

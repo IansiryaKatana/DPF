@@ -64,18 +64,19 @@ const Register = () => {
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-4">
       <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="flex items-center justify-center gap-2 mb-4">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <CardHeader className="text-center space-y-0 px-6 pb-6 pt-12">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-14 h-14 bg-primary rounded-xl flex items-center justify-center shadow-sm">
+              <svg width="26" height="26" viewBox="0 0 18 18" fill="none" aria-hidden>
                 <rect x="2" y="3" width="6" height="12" rx="1" fill="hsl(var(--primary-foreground))" />
                 <rect x="10" y="6" width="6" height="9" rx="1" fill="hsl(var(--primary-foreground))" opacity="0.7" />
               </svg>
             </div>
-            <span className="text-xl font-serif-display text-foreground">DataPulseFlow</span>
+            <div className="flex flex-col items-center gap-1.5 w-full">
+              <CardTitle className="text-2xl">Start Your Free Trial</CardTitle>
+              <CardDescription>7-day free trial • No commitment • Full platform access</CardDescription>
+            </div>
           </div>
-          <CardTitle className="text-2xl">Start Your Free Trial</CardTitle>
-          <CardDescription>7-day free trial • No commitment • Full platform access</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
