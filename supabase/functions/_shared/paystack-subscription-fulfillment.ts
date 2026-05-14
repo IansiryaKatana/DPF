@@ -58,6 +58,53 @@ export const parsePaystackMetadata = (raw: unknown): Record<string, unknown> => 
 };
 
 /**
+ * Webhook `charge.success` payloads are often thinner than `transaction/verify`.
+ * Merge missing customer / subscription / plan from verify so subscription list + codes resolve.
+ */
+const mergePaystackVerifyIntoPayment = async (
+  payment: Record<string, unknown>,
+  paystackSecret: string,
+): Promise<Record<string, unknown>> => {
+  const ref = String(payment.reference ?? "").trim();
+  if (!ref || !paystackSecret) return payment;
+
+  const vr = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(ref)}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${paystackSecret}`,
+      "Content-Type": "application/json",
+    },
+  });
+  const vj = await vr.json();
+  if (!vr.ok || !vj?.status || !vj?.data || typeof vj.data !== "object") return payment;
+
+  const d = vj.data as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...payment };
+
+  const curCust =
+    payment.customer && typeof payment.customer === "object"
+      ? (payment.customer as Record<string, unknown>)
+      : null;
+  if (!String(curCust?.customer_code ?? "").trim() && d.customer && typeof d.customer === "object") {
+    out.customer = d.customer;
+  }
+
+  const curSub =
+    payment.subscription && typeof payment.subscription === "object"
+      ? (payment.subscription as Record<string, unknown>)
+      : null;
+  if (!String(curSub?.subscription_code ?? "").trim() && d.subscription && typeof d.subscription === "object") {
+    out.subscription = d.subscription;
+  }
+
+  if (payment.plan == null && d.plan != null) {
+    out.plan = d.plan;
+  }
+
+  return out;
+};
+
+/**
  * Verify responses often omit `subscription.subscription_code` even when the charge succeeded.
  * Resolve it via Paystack's subscription list (same customer + plan when available).
  */
@@ -71,12 +118,22 @@ export const augmentPaystackPaymentWithSubscriptionCode = async (
       : null;
   if (String(existingSub?.subscription_code ?? "").trim()) return payment;
 
-  const customerObj =
-    payment.customer && typeof payment.customer === "object" ? (payment.customer as Record<string, unknown>) : null;
-  const customerCode = String(customerObj?.customer_code ?? "").trim();
-  if (!customerCode) return payment;
+  let paymentWork = await mergePaystackVerifyIntoPayment(payment, paystackSecret);
 
-  const planField = payment.plan;
+  const subAfterMerge =
+    paymentWork.subscription && typeof paymentWork.subscription === "object"
+      ? (paymentWork.subscription as Record<string, unknown>)
+      : null;
+  if (String(subAfterMerge?.subscription_code ?? "").trim()) return paymentWork;
+
+  const customerObj =
+    paymentWork.customer && typeof paymentWork.customer === "object"
+      ? (paymentWork.customer as Record<string, unknown>)
+      : null;
+  const customerCode = String(customerObj?.customer_code ?? "").trim();
+  if (!customerCode) return paymentWork;
+
+  const planField = paymentWork.plan;
   let planFilter = "";
   if (typeof planField === "string") planFilter = planField.trim();
   else if (planField && typeof planField === "object") {
@@ -121,10 +178,10 @@ export const augmentPaystackPaymentWithSubscriptionCode = async (
     const subCode = await tryList();
     if (subCode) {
       return {
-        ...payment,
+        ...paymentWork,
         subscription: {
-          ...(typeof payment.subscription === "object" && payment.subscription
-            ? (payment.subscription as Record<string, unknown>)
+          ...(typeof paymentWork.subscription === "object" && paymentWork.subscription
+            ? (paymentWork.subscription as Record<string, unknown>)
             : {}),
           subscription_code: subCode,
         },
@@ -133,7 +190,7 @@ export const augmentPaystackPaymentWithSubscriptionCode = async (
     if (attempt < 2) await new Promise((r) => setTimeout(r, 450));
   }
 
-  return payment;
+  return paymentWork;
 };
 
 export const buildAccessCode = () => {

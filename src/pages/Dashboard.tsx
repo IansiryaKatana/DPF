@@ -700,8 +700,12 @@ const Dashboard = () => {
     if (checkout !== "paystack-success") return;
     const reference = searchParams.get("reference") || searchParams.get("trxref");
     if (!reference) return;
-    navigate("/dashboard", { replace: true });
-    void handlePaystackVerification(reference);
+    // Keep ?checkout=… on the URL until verify finishes — otherwise auth redirects to /login
+    // while session is still hydrating (same "Please sign in again" + zero function invocations).
+    void (async () => {
+      await handlePaystackVerification(reference);
+      navigate("/dashboard", { replace: true });
+    })();
   }, [searchParams, handlePaystackVerification, navigate]);
 
   useEffect(() => {

@@ -697,8 +697,10 @@ const RealEstateDashboard = () => {
     if (checkout !== "paystack-success") return;
     const reference = searchParams.get("reference") || searchParams.get("trxref");
     if (!reference) return;
-    navigate("/real-estate/dashboard", { replace: true });
-    void handlePaystackVerification(reference);
+    void (async () => {
+      await handlePaystackVerification(reference);
+      navigate("/real-estate/dashboard", { replace: true });
+    })();
   }, [searchParams, handlePaystackVerification, navigate]);
 
   useEffect(() => {
