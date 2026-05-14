@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 import {
+  augmentPaystackPaymentWithSubscriptionCode,
   fulfillPaystackSubscriptionPayment,
   paymentHasPaystackPlan,
   resolveUserIdFromChargePayload,
@@ -93,15 +94,22 @@ serve(async (req) => {
         });
       }
 
+      const paymentReady = await augmentPaystackPaymentWithSubscriptionCode(payment, paystackSecret);
+
       const result = await fulfillPaystackSubscriptionPayment({
         supabase,
-        payment,
+        payment: paymentReady,
         userId: resolved.userId,
         productLine: resolved.productLine,
       });
 
       return new Response(
-        JSON.stringify({ received: true, processed: !result.alreadyProcessed, reference: result.reference }),
+        JSON.stringify({
+          received: true,
+          processed: !result.alreadyProcessed,
+          reference: result.reference,
+          userId: resolved.userId,
+        }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }

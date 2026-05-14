@@ -4,6 +4,41 @@ export type PaystackProductLine = "shopify" | "realestate";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Our subscription initialize endpoints embed user + plan in the Paystack reference:
+ * - Shopify: `DPF_SUB_{uuid}_{planKey}_{timestamp}`
+ * - Real estate: `DPF_RESUB_{uuid}_{planKey}_{timestamp}`
+ * Webhooks often omit `plan` / `subscription` / metadata fields; this is the reliable fallback.
+ */
+export const parseDpfSubscriptionCheckoutReference = (
+  reference: string,
+): { userId: string; planKey: string; productLine: PaystackProductLine } | null => {
+  const ref = String(reference ?? "").trim();
+  let productLine: PaystackProductLine = "shopify";
+  let prefix = "";
+  if (ref.startsWith("DPF_RESUB_")) {
+    prefix = "DPF_RESUB_";
+    productLine = "realestate";
+  } else if (ref.startsWith("DPF_SUB_")) {
+    prefix = "DPF_SUB_";
+    productLine = "shopify";
+  } else {
+    return null;
+  }
+  const rest = ref.slice(prefix.length);
+  const lastUnderscore = rest.lastIndexOf("_");
+  if (lastUnderscore <= 0) return null;
+  const tail = rest.slice(lastUnderscore + 1);
+  if (!/^\d+$/.test(tail)) return null;
+  const beforeTime = rest.slice(0, lastUnderscore);
+  const planSep = beforeTime.lastIndexOf("_");
+  if (planSep <= 0) return null;
+  const userId = beforeTime.slice(0, planSep);
+  const planKey = beforeTime.slice(planSep + 1);
+  if (!/^[0-9a-f-]{36}$/i.test(userId) || !planKey) return null;
+  return { userId, planKey, productLine };
+};
+
 /** Paystack sometimes returns `metadata` as a JSON string; normalize to an object. */
 export const parsePaystackMetadata = (raw: unknown): Record<string, unknown> => {
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
@@ -321,6 +356,8 @@ export const fulfillPaystackSubscriptionPayment = async (params: {
 };
 
 export const paymentHasPaystackPlan = (payment: Record<string, unknown>): boolean => {
+  const ref = String(payment.reference ?? "").trim();
+  if (ref.startsWith("DPF_SUB_") || ref.startsWith("DPF_RESUB_")) return true;
   const plan = payment.plan;
   if (typeof plan === "string" && plan.trim().length > 0) return true;
   if (plan && typeof plan === "object" && (plan as Record<string, unknown>).plan_code) return true;
@@ -335,6 +372,11 @@ export const resolveUserIdFromChargePayload = async (
   supabase: SupabaseClient,
   data: Record<string, unknown>,
 ): Promise<{ userId: string; productLine: PaystackProductLine; planKey: string } | null> => {
+  const fromRef = parseDpfSubscriptionCheckoutReference(String(data.reference ?? ""));
+  if (fromRef) {
+    return { userId: fromRef.userId, productLine: fromRef.productLine, planKey: fromRef.planKey };
+  }
+
   const metadata = parsePaystackMetadata(data.metadata);
   const metaUser = String(metadata.userId ?? "").trim();
   const metaProduct = String(metadata.productLine ?? "").toLowerCase();
@@ -342,6 +384,11 @@ export const resolveUserIdFromChargePayload = async (
 
   if (metaUser && (metaProduct === "shopify" || metaProduct === "realestate")) {
     return { userId: metaUser, productLine: metaProduct as PaystackProductLine, planKey: planKeyMeta };
+  }
+
+  if (metaUser && String(metadata.billing) === "subscription") {
+    const inferred: PaystackProductLine = metaProduct === "realestate" ? "realestate" : "shopify";
+    return { userId: metaUser, productLine: inferred, planKey: planKeyMeta || "growth" };
   }
 
   const subscriptionObj =

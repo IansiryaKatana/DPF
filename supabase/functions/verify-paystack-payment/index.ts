@@ -4,6 +4,7 @@ import {
   augmentPaystackPaymentWithSubscriptionCode,
   fulfillPaystackSubscriptionPayment,
   invoiceAlreadyRecorded,
+  parseDpfSubscriptionCheckoutReference,
   parsePaystackMetadata,
   paymentHasPaystackPlan,
 } from "../_shared/paystack-subscription-fulfillment.ts";
@@ -75,6 +76,11 @@ serve(async (req) => {
     const payment = verifyJson.data as Record<string, unknown>;
     if (payment.status !== "success") {
       throw new Error("Paystack payment is not successful");
+    }
+
+    const refOwner = parseDpfSubscriptionCheckoutReference(String(payment.reference ?? reference));
+    if (refOwner && refOwner.userId !== userData.user.id) {
+      throw new Error("Payment reference does not match signed-in user.");
     }
 
     const keys = invoiceKeys(payment, reference);
