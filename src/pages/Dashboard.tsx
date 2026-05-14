@@ -170,17 +170,33 @@ const Dashboard = () => {
 
   const callEdgeFunction = useCallback(
     async <T = any>(functionName: string, body?: unknown): Promise<T> => {
+      const baseUrl = String(import.meta.env.VITE_SUPABASE_URL ?? "").trim().replace(/\/$/, "");
+      const anonKey = String(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "").trim();
+      if (!baseUrl || !anonKey) {
+        throw new Error(
+          "Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY — Edge Functions cannot be called.",
+        );
+      }
       const accessToken = await getFreshAccessToken();
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${functionName}`;
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body ?? {}),
-      });
+      const url = `${baseUrl}/functions/v1/${functionName}`;
+      console.info("[EdgeFunction] POST", functionName, url);
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: {
+            apikey: anonKey,
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body ?? {}),
+        });
+      } catch (e) {
+        console.error("[EdgeFunction] fetch network error", functionName, e);
+        throw new Error(
+          `Network error calling ${functionName}. Check your connection, disable ad blockers for this site, and confirm the app is built with the correct Supabase URL.`,
+        );
+      }
 
       let details: unknown = null;
       try {
@@ -239,12 +255,17 @@ const Dashboard = () => {
 
   useEffect(() => {
     if (loading) return;
+    const checkout = searchParams.get("checkout");
+    const awaitingPaymentReturn =
+      checkout === "paystack-success" || checkout === "paypal-success";
+    // Do not send to login while Paystack/PayPal return params are present — session can lag storage;
+    // kicking to login prevents verify and produces zero Edge Function invocations.
     if (!user || !session) {
+      if (awaitingPaymentReturn) return;
       navigate("/login");
       return;
     }
-    const checkout = searchParams.get("checkout");
-    if (checkout === "paystack-success" || checkout === "paypal-success") return;
+    if (awaitingPaymentReturn) return;
     if (isAdmin) {
       navigate("/admin");
       return;
@@ -615,6 +636,7 @@ const Dashboard = () => {
 
   const handlePaystackVerification = useCallback(async (reference: string) => {
     try {
+      console.info("[Paystack verify] waiting for session…", { reference });
       const storageSession = await waitForSupabaseSession();
       if (!storageSession?.access_token) {
         throw new Error("Please sign in again.");
@@ -622,6 +644,7 @@ const Dashboard = () => {
       if (processedPaystackReferences.current.has(reference)) return;
       processedPaystackReferences.current.add(reference);
       setIsProcessingPayPalPayment(true);
+      console.info("[Paystack verify] calling Edge Function", { reference });
       const data = await callEdgeFunction<{ status?: string; accessCode?: string; billing?: string }>(
         "verify-paystack-payment",
         { reference },

@@ -22,6 +22,7 @@ const invoiceKeys = (payment: Record<string, unknown>, reference: string): strin
 };
 
 serve(async (req) => {
+  console.info("[verify-paystack-payment] request", req.method, new Date().toISOString());
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
