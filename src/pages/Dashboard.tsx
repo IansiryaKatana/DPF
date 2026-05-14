@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { PLANS, getPlanByProductId, PlanKey } from "@/config/plans";
+import { waitForSupabaseSession } from "@/lib/waitForSupabaseSession";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -612,7 +613,12 @@ const Dashboard = () => {
 
   const handlePaystackVerification = useCallback(async (reference: string) => {
     try {
-      if (!session) throw new Error("Please sign in again.");
+      const storageSession = await waitForSupabaseSession();
+      if (!storageSession?.access_token) {
+        throw new Error("Please sign in again.");
+      }
+      if (processedPaystackReferences.current.has(reference)) return;
+      processedPaystackReferences.current.add(reference);
       setIsProcessingPayPalPayment(true);
       const data = await callEdgeFunction<{ status?: string; accessCode?: string; billing?: string }>(
         "verify-paystack-payment",
@@ -620,6 +626,7 @@ const Dashboard = () => {
       );
       if (data?.status === "COMPLETED") {
         const isSub = data?.billing === "paystack_subscription";
+        const uid = storageSession.user.id;
         setPaymentSuccessDialog({
           open: true,
           title: "Payment completed successfully",
@@ -631,13 +638,13 @@ const Dashboard = () => {
           accessCode: data?.accessCode,
         });
         const [{ data: subData }, { data: invData }] = await Promise.all([
-          supabase.from("subscriptions").select("*").eq("user_id", user?.id ?? "").maybeSingle(),
-          supabase.from("invoices").select("*").eq("user_id", user?.id ?? "").order("invoice_date", { ascending: false }),
+          supabase.from("subscriptions").select("*").eq("user_id", uid).maybeSingle(),
+          supabase.from("invoices").select("*").eq("user_id", uid).order("invoice_date", { ascending: false }),
         ]);
         const { data: codeData } = await supabase
           .from("client_access_codes")
           .select("*")
-          .eq("user_id", user?.id ?? "")
+          .eq("user_id", uid)
           .order("expires_at", { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -648,11 +655,12 @@ const Dashboard = () => {
         toast.info("Paystack payment is pending verification.");
       }
     } catch (error: any) {
+      processedPaystackReferences.current.delete(reference);
       toast.error("Failed to verify Paystack payment: " + (error.message || "Unknown error"));
     } finally {
       setIsProcessingPayPalPayment(false);
     }
-  }, [user?.id, session, callEdgeFunction]);
+  }, [callEdgeFunction]);
 
   useEffect(() => {
     const checkout = searchParams.get("checkout");
@@ -667,13 +675,9 @@ const Dashboard = () => {
     if (checkout !== "paystack-success") return;
     const reference = searchParams.get("reference") || searchParams.get("trxref");
     if (!reference) return;
-    // Wait for Supabase session — otherwise we mark processed and never retry (race on cold load / return URL).
-    if (!session) return;
-    if (processedPaystackReferences.current.has(reference)) return;
-    processedPaystackReferences.current.add(reference);
     navigate("/dashboard", { replace: true });
     void handlePaystackVerification(reference);
-  }, [searchParams, handlePaystackVerification, navigate, session]);
+  }, [searchParams, handlePaystackVerification, navigate]);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);

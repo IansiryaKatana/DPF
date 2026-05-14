@@ -7,6 +7,7 @@ import {
   getRealEstatePlanByProductId,
   type RealEstatePlanKey,
 } from "@/config/realestatePlans";
+import { waitForSupabaseSession } from "@/lib/waitForSupabaseSession";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -611,7 +612,12 @@ const RealEstateDashboard = () => {
 
   const handlePaystackVerification = useCallback(async (reference: string) => {
     try {
-      if (!session) throw new Error("Please sign in again.");
+      const storageSession = await waitForSupabaseSession();
+      if (!storageSession?.access_token) {
+        throw new Error("Please sign in again.");
+      }
+      if (processedPaystackReferences.current.has(reference)) return;
+      processedPaystackReferences.current.add(reference);
       setIsProcessingPayPalPayment(true);
       const data = await callEdgeFunction<{ status?: string; accessCode?: string; billing?: string }>(
         "verify-realestate-paystack-payment",
@@ -619,6 +625,7 @@ const RealEstateDashboard = () => {
       );
       if (data?.status === "COMPLETED") {
         const isSub = data?.billing === "paystack_subscription";
+        const uid = storageSession.user.id;
         setPaymentSuccessDialog({
           open: true,
           title: "Payment completed successfully",
@@ -630,13 +637,13 @@ const RealEstateDashboard = () => {
           accessCode: data?.accessCode,
         });
         const [{ data: subData }, { data: invData }] = await Promise.all([
-          supabase.from("realestate_subscriptions").select("*").eq("user_id", user?.id ?? "").maybeSingle(),
-          supabase.from("realestate_invoices").select("*").eq("user_id", user?.id ?? "").order("invoice_date", { ascending: false }),
+          supabase.from("realestate_subscriptions").select("*").eq("user_id", uid).maybeSingle(),
+          supabase.from("realestate_invoices").select("*").eq("user_id", uid).order("invoice_date", { ascending: false }),
         ]);
         const { data: codeData } = await supabase
           .from("realestate_client_access_codes")
           .select("*")
-          .eq("user_id", user?.id ?? "")
+          .eq("user_id", uid)
           .order("expires_at", { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -647,11 +654,12 @@ const RealEstateDashboard = () => {
         toast.info("Paystack payment is pending verification.");
       }
     } catch (error: any) {
+      processedPaystackReferences.current.delete(reference);
       toast.error("Failed to verify Paystack payment: " + (error.message || "Unknown error"));
     } finally {
       setIsProcessingPayPalPayment(false);
     }
-  }, [user?.id, session, callEdgeFunction]);
+  }, [callEdgeFunction]);
 
   useEffect(() => {
     const checkout = searchParams.get("checkout");
@@ -666,12 +674,9 @@ const RealEstateDashboard = () => {
     if (checkout !== "paystack-success") return;
     const reference = searchParams.get("reference") || searchParams.get("trxref");
     if (!reference) return;
-    if (!session) return;
-    if (processedPaystackReferences.current.has(reference)) return;
-    processedPaystackReferences.current.add(reference);
     navigate("/real-estate/dashboard", { replace: true });
     void handlePaystackVerification(reference);
-  }, [searchParams, handlePaystackVerification, navigate, session]);
+  }, [searchParams, handlePaystackVerification, navigate]);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
