@@ -4,6 +4,103 @@ export type PaystackProductLine = "shopify" | "realestate";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Paystack sometimes returns `metadata` as a JSON string; normalize to an object. */
+export const parsePaystackMetadata = (raw: unknown): Record<string, unknown> => {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return {};
+};
+
+/**
+ * Verify responses often omit `subscription.subscription_code` even when the charge succeeded.
+ * Resolve it via Paystack's subscription list (same customer + plan when available).
+ */
+export const augmentPaystackPaymentWithSubscriptionCode = async (
+  payment: Record<string, unknown>,
+  paystackSecret: string,
+): Promise<Record<string, unknown>> => {
+  const existingSub =
+    payment.subscription && typeof payment.subscription === "object"
+      ? (payment.subscription as Record<string, unknown>)
+      : null;
+  if (String(existingSub?.subscription_code ?? "").trim()) return payment;
+
+  const customerObj =
+    payment.customer && typeof payment.customer === "object" ? (payment.customer as Record<string, unknown>) : null;
+  const customerCode = String(customerObj?.customer_code ?? "").trim();
+  if (!customerCode) return payment;
+
+  const planField = payment.plan;
+  let planFilter = "";
+  if (typeof planField === "string") planFilter = planField.trim();
+  else if (planField && typeof planField === "object") {
+    planFilter = String((planField as Record<string, unknown>).plan_code ?? "").trim();
+  }
+
+  const url = new URL("https://api.paystack.co/subscription");
+  url.searchParams.set("customer", customerCode);
+  url.searchParams.set("perPage", "50");
+  if (planFilter) url.searchParams.set("plan", planFilter);
+
+  const tryList = async (): Promise<string> => {
+    const listRes = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${paystackSecret}`, "Content-Type": "application/json" },
+    });
+    const listJson = await listRes.json();
+    if (!listRes.ok || !listJson?.status || !Array.isArray(listJson?.data)) return "";
+
+    const rows = listJson.data as Record<string, unknown>[];
+    const normalizeStatus = (s: unknown) => String(s ?? "").toLowerCase();
+    const activeRows = rows.filter((r) => ["active", "non-renewing"].includes(normalizeStatus(r.status)));
+    const candidates = activeRows.length > 0 ? activeRows : rows;
+
+    const planRow = planFilter
+      ? candidates.find((r) => {
+          const p = r.plan;
+          const code =
+            typeof p === "string"
+              ? p
+              : p && typeof p === "object"
+              ? String((p as Record<string, unknown>).plan_code ?? "")
+              : "";
+          return code === planFilter;
+        })
+      : undefined;
+
+    const chosen = planRow ?? candidates[0];
+    return chosen ? String(chosen.subscription_code ?? "").trim() : "";
+  };
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const subCode = await tryList();
+    if (subCode) {
+      return {
+        ...payment,
+        subscription: {
+          ...(typeof payment.subscription === "object" && payment.subscription
+            ? (payment.subscription as Record<string, unknown>)
+            : {}),
+          subscription_code: subCode,
+        },
+      };
+    }
+    if (attempt < 2) await new Promise((r) => setTimeout(r, 450));
+  }
+
+  return payment;
+};
+
 export const buildAccessCode = () => {
   const charset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const chunk = (size: number) =>
@@ -66,8 +163,7 @@ export const fulfillPaystackSubscriptionPayment = async (params: {
     return { alreadyProcessed: true, reference: String(payment.reference ?? "") };
   }
 
-  const metadata =
-    payment.metadata && typeof payment.metadata === "object" ? (payment.metadata as Record<string, unknown>) : {};
+  const metadata = parsePaystackMetadata(payment.metadata);
   const subscriptionObj =
     payment.subscription && typeof payment.subscription === "object"
       ? (payment.subscription as Record<string, unknown>)
@@ -226,13 +322,11 @@ export const fulfillPaystackSubscriptionPayment = async (params: {
 
 export const paymentHasPaystackPlan = (payment: Record<string, unknown>): boolean => {
   const plan = payment.plan;
+  if (typeof plan === "string" && plan.trim().length > 0) return true;
   if (plan && typeof plan === "object" && (plan as Record<string, unknown>).plan_code) return true;
   const sub = payment.subscription;
   if (sub && typeof sub === "object" && (sub as Record<string, unknown>).subscription_code) return true;
-  const meta =
-    payment.metadata && typeof payment.metadata === "object"
-      ? (payment.metadata as Record<string, unknown>)
-      : {};
+  const meta = parsePaystackMetadata(payment.metadata);
   if (String(meta.billing) === "subscription") return true;
   return false;
 };
@@ -241,8 +335,7 @@ export const resolveUserIdFromChargePayload = async (
   supabase: SupabaseClient,
   data: Record<string, unknown>,
 ): Promise<{ userId: string; productLine: PaystackProductLine; planKey: string } | null> => {
-  const metadata =
-    data.metadata && typeof data.metadata === "object" ? (data.metadata as Record<string, unknown>) : {};
+  const metadata = parsePaystackMetadata(data.metadata);
   const metaUser = String(metadata.userId ?? "").trim();
   const metaProduct = String(metadata.productLine ?? "").toLowerCase();
   const planKeyMeta = String(metadata.planKey ?? "growth");

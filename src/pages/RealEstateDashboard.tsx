@@ -666,11 +666,12 @@ const RealEstateDashboard = () => {
     if (checkout !== "paystack-success") return;
     const reference = searchParams.get("reference") || searchParams.get("trxref");
     if (!reference) return;
+    if (!session) return;
     if (processedPaystackReferences.current.has(reference)) return;
     processedPaystackReferences.current.add(reference);
     navigate("/real-estate/dashboard", { replace: true });
     void handlePaystackVerification(reference);
-  }, [searchParams, handlePaystackVerification, navigate]);
+  }, [searchParams, handlePaystackVerification, navigate, session]);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);

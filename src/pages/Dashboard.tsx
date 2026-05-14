@@ -667,11 +667,13 @@ const Dashboard = () => {
     if (checkout !== "paystack-success") return;
     const reference = searchParams.get("reference") || searchParams.get("trxref");
     if (!reference) return;
+    // Wait for Supabase session — otherwise we mark processed and never retry (race on cold load / return URL).
+    if (!session) return;
     if (processedPaystackReferences.current.has(reference)) return;
     processedPaystackReferences.current.add(reference);
     navigate("/dashboard", { replace: true });
     void handlePaystackVerification(reference);
-  }, [searchParams, handlePaystackVerification, navigate]);
+  }, [searchParams, handlePaystackVerification, navigate, session]);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);

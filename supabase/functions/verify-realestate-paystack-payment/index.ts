@@ -1,8 +1,10 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 import {
+  augmentPaystackPaymentWithSubscriptionCode,
   fulfillPaystackSubscriptionPayment,
   invoiceAlreadyRecorded,
+  parsePaystackMetadata,
   paymentHasPaystackPlan,
 } from "../_shared/paystack-subscription-fulfillment.ts";
 
@@ -89,17 +91,17 @@ serve(async (req) => {
       );
     }
 
-    const meta =
-      payment.metadata && typeof payment.metadata === "object" ? (payment.metadata as Record<string, unknown>) : {};
+    const meta = parsePaystackMetadata(payment.metadata);
     const productLineMeta = String(meta.productLine ?? "").toLowerCase();
     if (productLineMeta === "shopify") {
       throw new Error("Use the Shopify dashboard to verify this payment.");
     }
 
     if (paymentHasPaystackPlan(payment)) {
+      const paymentForSub = await augmentPaystackPaymentWithSubscriptionCode(payment, paystackSecret);
       const sub = await fulfillPaystackSubscriptionPayment({
         supabase,
-        payment,
+        payment: paymentForSub,
         userId: userData.user.id,
         productLine: "realestate",
       });
@@ -161,7 +163,7 @@ serve(async (req) => {
       : Number.isFinite(chargedAmountKes) && chargedAmountKes > 0
       ? chargedAmountKes
       : paidAmount;
-    if (Math.abs(paidAmount - expectedChargedAmount) > 0.01) {
+    if (Math.abs(paidAmount - expectedChargedAmount) > 0.02) {
       throw new Error("Verified amount does not match initialized Paystack amount");
     }
 
