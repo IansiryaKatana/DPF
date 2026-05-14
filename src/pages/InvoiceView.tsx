@@ -23,6 +23,16 @@ interface LineItem {
   amount: number;
 }
 
+/** Prefer stored line amount; if missing/zero, use quantity × unit_price (legacy rows). */
+function lineItemDisplayAmount(item: { quantity: unknown; unit_price: unknown; amount: unknown }): number {
+  const q = Number(item.quantity) || 0;
+  const p = Number(item.unit_price) || 0;
+  const computed = q * p;
+  const stored = Number(item.amount);
+  if (Number.isFinite(stored) && stored !== 0) return stored;
+  return computed;
+}
+
 const InvoiceView = () => {
   const { id } = useParams<{ id: string }>();
   const { user, loading } = useAuth();
@@ -89,7 +99,7 @@ const InvoiceView = () => {
     Number(amt).toLocaleString("en-US", { minimumFractionDigits: 2 });
 
   const totalAmount = lineItems.length > 0
-    ? lineItems.reduce((sum, it) => sum + Number(it.amount), 0)
+    ? lineItems.reduce((sum, it) => sum + lineItemDisplayAmount(it), 0)
     : Number(invoice?.amount || 0);
 
   const handleDownloadPDF = () => {
@@ -186,10 +196,11 @@ const InvoiceView = () => {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     items.forEach((item: any) => {
+      const rowAmt = lineItemDisplayAmount(item);
       doc.text(item.description || "Service", colDesc, y + 6);
       doc.text(String(Number(item.quantity)), colQty, y + 6, { align: "right" });
       doc.text(formatAmount(item.unit_price), colPrice, y + 6, { align: "right" });
-      doc.text(formatAmount(item.amount), colAmt, y + 6, { align: "right" });
+      doc.text(formatAmount(rowAmt), colAmt, y + 6, { align: "right" });
       y += 10;
       doc.setDrawColor(220, 220, 225);
       doc.line(margin, y, pageWidth - margin, y);
@@ -222,7 +233,7 @@ const InvoiceView = () => {
       doc.setFontSize(9);
       doc.setFont("helvetica", "bold");
       doc.setTextColor(22, 163, 74);
-      doc.text(`Payment received on ${format(new Date(invoice.paid_at), "MMMM d, yyyy")}`, margin + 5, y + 8);
+      doc.text(`Payment received on ${format(new Date(invoice.paid_at), "MMMM d, yyyy 'at' h:mm a")}`, margin + 5, y + 8);
     }
 
     const footerY = doc.internal.pageSize.getHeight() - 20;
@@ -351,7 +362,7 @@ const InvoiceView = () => {
                     <td className="py-4 text-right font-mono text-foreground">{Number(item.quantity)}</td>
                     <td className="py-4 text-right font-mono text-foreground">{formatAmount(item.unit_price)}</td>
                     <td className="py-4 text-right font-mono text-foreground">
-                      {currency} {formatAmount(item.amount)}
+                      {currency} {formatAmount(lineItemDisplayAmount(item))}
                     </td>
                   </tr>
                 ))}
@@ -378,7 +389,7 @@ const InvoiceView = () => {
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-600" />
                 <p className="text-sm font-medium text-green-800">
-                  Payment received on {format(new Date(invoice.paid_at), "MMMM d, yyyy")}
+                  Payment received on {format(new Date(invoice.paid_at), "MMMM d, yyyy 'at' h:mm a")}
                 </p>
               </div>
             </div>

@@ -23,6 +23,7 @@ interface InvoiceForm {
   status: string;
   invoice_date: string;
   due_date: string;
+  payment_received_at: string;
 }
 
 const emptyForm: InvoiceForm = {
@@ -33,7 +34,21 @@ const emptyForm: InvoiceForm = {
   status: "pending",
   invoice_date: new Date().toISOString().split("T")[0],
   due_date: "",
+  payment_received_at: "",
 };
+
+function resolveRealEstatePaidAt(form: InvoiceForm): string | null {
+  if (form.status !== "paid") return null;
+  if (form.payment_received_at?.trim()) {
+    const d = new Date(form.payment_received_at);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  if (form.invoice_date) {
+    const d = new Date(`${form.invoice_date}T12:00:00`);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  return new Date().toISOString();
+}
 
 const RealEstateInvoiceManager = () => {
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -102,6 +117,11 @@ const RealEstateInvoiceManager = () => {
       status: inv.status || "pending",
       invoice_date: inv.invoice_date?.split("T")[0] || "",
       due_date: inv.due_date?.split("T")[0] || "",
+      payment_received_at: inv.paid_at
+        ? format(new Date(inv.paid_at), "yyyy-MM-dd'T'HH:mm")
+        : inv.status === "paid" && inv.invoice_date
+          ? `${String(inv.invoice_date).split("T")[0]}T12:00`
+          : "",
     });
     setEditingId(inv.id);
     setDialogOpen(true);
@@ -122,7 +142,7 @@ const RealEstateInvoiceManager = () => {
         status: form.status,
         invoice_date: form.invoice_date || new Date().toISOString(),
         due_date: form.due_date || null,
-        paid_at: form.status === "paid" ? new Date().toISOString() : null,
+        paid_at: resolveRealEstatePaidAt(form),
       };
 
       let invoiceId = editingId;
@@ -238,9 +258,30 @@ const RealEstateInvoiceManager = () => {
             </div>
             <div className="space-y-2"><Label>Amount</Label><Input type="number" min="1" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} /></div>
             <div className="space-y-2"><Label>Currency</Label><Input value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value.toLowerCase() })} /></div>
-            <div className="space-y-2"><Label>Status</Label><Select value={form.status} onValueChange={(value) => setForm({ ...form, status: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="pending">pending</SelectItem><SelectItem value="paid">paid</SelectItem><SelectItem value="overdue">overdue</SelectItem></SelectContent></Select></div>
+            <div className="space-y-2"><Label>Status</Label><Select value={form.status} onValueChange={(value) => {
+              setForm((prev) => {
+                let payment_received_at = prev.payment_received_at;
+                if (value === "paid" && !payment_received_at?.trim()) {
+                  payment_received_at = prev.invoice_date
+                    ? `${prev.invoice_date}T12:00`
+                    : format(new Date(), "yyyy-MM-dd'T'HH:mm");
+                }
+                if (value !== "paid") payment_received_at = "";
+                return { ...prev, status: value, payment_received_at };
+              });
+            }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="pending">pending</SelectItem><SelectItem value="paid">paid</SelectItem><SelectItem value="overdue">overdue</SelectItem></SelectContent></Select></div>
             <div className="space-y-2"><Label>Invoice Date</Label><Input type="date" value={form.invoice_date} onChange={(e) => setForm({ ...form, invoice_date: e.target.value })} /></div>
             <div className="space-y-2"><Label>Due Date</Label><Input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></div>
+            {form.status === "paid" && (
+              <div className="sm:col-span-2 space-y-2">
+                <Label>Payment received (date and time)</Label>
+                <Input
+                  type="datetime-local"
+                  value={form.payment_received_at}
+                  onChange={(e) => setForm({ ...form, payment_received_at: e.target.value })}
+                />
+              </div>
+            )}
             <div className="sm:col-span-2 space-y-2"><Label>Description</Label><Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Optional invoice note" /></div>
           </div>
           <DialogFooter>

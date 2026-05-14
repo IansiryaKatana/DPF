@@ -36,6 +36,8 @@ interface InvoiceForm {
   status: string;
   invoice_date: string;
   due_date: string;
+  /** Local datetime for `datetime-local` when status is paid */
+  payment_received_at: string;
   lineItems: LineItem[];
 }
 
@@ -48,8 +50,22 @@ const emptyForm: InvoiceForm = {
   status: "pending",
   invoice_date: new Date().toISOString().split("T")[0],
   due_date: "",
+  payment_received_at: "",
   lineItems: [{ ...emptyLineItem }],
 };
+
+function resolveInvoicePaidAt(form: InvoiceForm): string | null {
+  if (form.status !== "paid") return null;
+  if (form.payment_received_at?.trim()) {
+    const d = new Date(form.payment_received_at);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  if (form.invoice_date) {
+    const d = new Date(`${form.invoice_date}T12:00:00`);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  return new Date().toISOString();
+}
 
 const InvoiceManager = () => {
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -114,6 +130,11 @@ const InvoiceManager = () => {
       status: inv.status,
       invoice_date: inv.invoice_date?.split("T")[0] || "",
       due_date: inv.due_date?.split("T")[0] || "",
+      payment_received_at: inv.paid_at
+        ? format(new Date(inv.paid_at), "yyyy-MM-dd'T'HH:mm")
+        : inv.status === "paid" && inv.invoice_date
+          ? `${String(inv.invoice_date).split("T")[0]}T12:00`
+          : "",
       lineItems,
     });
     setEditingId(inv.id);
@@ -153,7 +174,7 @@ const InvoiceManager = () => {
         status: form.status,
         invoice_date: form.invoice_date || new Date().toISOString(),
         due_date: form.due_date || null,
-        paid_at: form.status === "paid" ? new Date().toISOString() : null,
+        paid_at: resolveInvoicePaidAt(form),
       };
 
       let invoiceId = editingId;
@@ -172,12 +193,17 @@ const InvoiceManager = () => {
       // Insert line items
       const itemsPayload = form.lineItems
         .filter(it => it.description || parseFloat(it.unit_price) > 0)
-        .map(it => ({
-          invoice_id: invoiceId!,
-          description: it.description || "Service",
-          quantity: parseFloat(it.quantity) || 1,
-          unit_price: parseFloat(it.unit_price) || 0,
-        }));
+        .map(it => {
+          const quantity = parseFloat(it.quantity) || 1;
+          const unit_price = parseFloat(it.unit_price) || 0;
+          return {
+            invoice_id: invoiceId!,
+            description: it.description || "Service",
+            quantity,
+            unit_price,
+            amount: quantity * unit_price,
+          };
+        });
 
       if (itemsPayload.length > 0) {
         const { error: itemsError } = await supabase.from("invoice_items").insert(itemsPayload);
@@ -360,7 +386,21 @@ const InvoiceManager = () => {
               </div>
               <div className="space-y-2">
                 <Label>Status</Label>
-                <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
+                <Select
+                  value={form.status}
+                  onValueChange={(v) => {
+                    setForm((prev) => {
+                      let payment_received_at = prev.payment_received_at;
+                      if (v === "paid" && !payment_received_at?.trim()) {
+                        payment_received_at = prev.invoice_date
+                          ? `${prev.invoice_date}T12:00`
+                          : format(new Date(), "yyyy-MM-dd'T'HH:mm");
+                      }
+                      if (v !== "paid") payment_received_at = "";
+                      return { ...prev, status: v, payment_received_at };
+                    });
+                  }}
+                >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="pending">Pending</SelectItem>
@@ -397,6 +437,20 @@ const InvoiceManager = () => {
                 />
               </div>
             </div>
+
+            {form.status === "paid" && (
+              <div className="space-y-2">
+                <Label>Payment received (date and time)</Label>
+                <Input
+                  type="datetime-local"
+                  value={form.payment_received_at}
+                  onChange={(e) => setForm({ ...form, payment_received_at: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Stored as the exact moment payment was recorded. If cleared before save, invoice date at noon is used.
+                </p>
+              </div>
+            )}
 
             {/* Line Items */}
             <div className="space-y-3">
