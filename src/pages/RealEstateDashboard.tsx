@@ -246,10 +246,12 @@ const RealEstateDashboard = () => {
       navigate("/real-estate/login?next=/real-estate/dashboard");
       return;
     }
+    const checkout = searchParams.get("checkout");
+    if (checkout === "paystack-success" || checkout === "paypal-success") return;
     if (!isRealEstateUser && !isAdmin) {
       navigate("/dashboard");
     }
-  }, [user, session, loading, isAdmin, isRealEstateUser, navigate]);
+  }, [user, session, loading, isAdmin, isRealEstateUser, navigate, searchParams]);
 
   useEffect(() => {
     const checkout = searchParams.get("checkout");

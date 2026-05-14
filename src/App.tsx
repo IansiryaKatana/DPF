@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -23,6 +23,12 @@ import RealEstateAdmin from "./pages/RealEstateAdmin.tsx";
 import RealEstateInvoiceView from "./pages/RealEstateInvoiceView.tsx";
 import CookieConsentBanner from "./components/CookieConsentBanner.tsx";
 import SupportChatWidget from "./components/SupportChatWidget.tsx";
+
+/** Legacy paths used by Dashboard auth — preserve ?checkout=…&reference=… for Paystack return. */
+const LegacyRealEstateDashboardRedirect = ({ to }: { to: string }) => {
+  const { search } = useLocation();
+  return <Navigate to={`${to}${search}`} replace />;
+};
 
 const queryClient = new QueryClient();
 
@@ -68,8 +74,14 @@ const App = () => (
             <Route path="/salesportal/reset-password" element={<ResetPassword />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/salesportal/dashboard" element={<Dashboard />} />
-            <Route path="/dashboard/real-estate" element={<Navigate to="/real-estate/dashboard" replace />} />
-            <Route path="/salesportal/dashboard/real-estate" element={<Navigate to="/real-estate/dashboard" replace />} />
+            <Route
+              path="/dashboard/real-estate"
+              element={<LegacyRealEstateDashboardRedirect to="/real-estate/dashboard" />}
+            />
+            <Route
+              path="/salesportal/dashboard/real-estate"
+              element={<LegacyRealEstateDashboardRedirect to="/salesportal/real-estate/dashboard" />}
+            />
             <Route path="/admin" element={<Admin />} />
             <Route path="/salesportal/admin" element={<Admin />} />
             <Route path="/invoice/:id" element={<InvoiceView />} />

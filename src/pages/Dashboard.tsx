@@ -243,6 +243,8 @@ const Dashboard = () => {
       navigate("/login");
       return;
     }
+    const checkout = searchParams.get("checkout");
+    if (checkout === "paystack-success" || checkout === "paypal-success") return;
     if (isAdmin) {
       navigate("/admin");
       return;
@@ -250,7 +252,7 @@ const Dashboard = () => {
     if (isRealEstateUser) {
       navigate("/dashboard/real-estate");
     }
-  }, [user, session, loading, isAdmin, isRealEstateUser, navigate]);
+  }, [user, session, loading, isAdmin, isRealEstateUser, navigate, searchParams]);
 
   useEffect(() => {
     const checkout = searchParams.get("checkout");
