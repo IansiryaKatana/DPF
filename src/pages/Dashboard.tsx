@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { PLANS, getPlanByProductId, PlanKey } from "@/config/plans";
 import { waitForSupabaseSession } from "@/lib/waitForSupabaseSession";
+import { hasEverHadPaidPlan, isNewTrialUser } from "@/lib/subscription-access";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -789,9 +790,11 @@ const Dashboard = () => {
       latestAccessCode.status === "active" &&
       (isLifetimeCode || accessCodeExpiryMs > nowMs),
   );
+  const everHadPaidPlan = hasEverHadPaidPlan({ subscription, latestAccessCode, invoices });
   const hasPaidAccessState =
     isSubscribed ||
     hasActiveAccessCode ||
+    everHadPaidPlan ||
     Boolean(currentPlan && subStatus !== "trialing") ||
     Boolean(
       subscription?.plan &&
@@ -800,7 +803,7 @@ const Dashboard = () => {
       subscription.status !== "trialing",
     );
 
-  const isTrialing = subStatus === "trialing" && !hasPaidAccessState;
+  const isTrialing = isNewTrialUser({ subscription, latestAccessCode, invoices, subStatus });
   const isTrialExpired = isTrialing && trialRemainingMs <= 0;
   const nextBillingDate = stripeStatus?.subscription_end
     ? new Date(stripeStatus.subscription_end).toLocaleDateString()
@@ -828,10 +831,20 @@ const Dashboard = () => {
     hasActiveAccessCode &&
     !isLifetimeCode &&
     Boolean(latestAccessCode?.expires_at);
-  const showTrialBanner = isTrialing && !showAccessCodeBanner && !hasPaidAccessState;
+  const showExpiredPlanBanner =
+    everHadPaidPlan &&
+    !hasActiveAccessCode &&
+    !isLifetimeCode &&
+    !showAccessCodeBanner;
+  const showTrialBanner = isTrialing && !showAccessCodeBanner && !showExpiredPlanBanner;
   const accessCodeExpiryLabel = latestAccessCode?.expires_at
     ? new Date(latestAccessCode.expires_at).toLocaleString()
     : null;
+  const expiredPlanKey =
+    (latestAccessCode?.plan as PlanKey | undefined) ||
+    (subscription?.plan !== "trial" ? (subscription?.plan as PlanKey | undefined) : undefined);
+  const expiredPlanName =
+    expiredPlanKey && expiredPlanKey in PLANS ? PLANS[expiredPlanKey].name : "Paid plan";
   const planPurchasesLocked = hasActiveAccessCode;
   const purchaseLockMessage = isLifetimeCode
     ? "Lifetime plan is active. Additional purchases are disabled."
@@ -952,7 +965,7 @@ const Dashboard = () => {
           <p className="text-muted-foreground">Manage your DataPulseFlow integration platform</p>
         </motion.div>
 
-        {/* Trial Banner */}
+        {/* Trial Banner — new users only */}
         {showTrialBanner && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
             <Card
@@ -971,7 +984,7 @@ const Dashboard = () => {
                     </p>
                     <p className="text-sm text-white/85">
                       {isTrialExpired
-                        ? "Renew with a paid plan to continue access."
+                        ? "Choose a plan below to get started."
                         : "Add a payment method to continue after your trial"}
                     </p>
                   </div>
@@ -983,6 +996,33 @@ const Dashboard = () => {
             </Card>
           </motion.div>
         )}
+
+        {/* Expired plan banner — returning customers whose access window ended */}
+        {showExpiredPlanBanner && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+            <Card className="mb-6 border-0 shadow-sm bg-gradient-to-r from-[#4a1212] via-[#7a1f1f] to-[#b73232]">
+              <CardContent className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 gap-4">
+                <div className="flex items-center gap-3">
+                  <AlertTriangle className="w-5 h-5 text-white" />
+                  <div>
+                    <p className="font-medium text-white">
+                      {expiredPlanName} Access Expired
+                    </p>
+                    <p className="text-sm text-white/85">
+                      Your paid access window has ended
+                      {accessCodeExpiryLabel ? ` on ${accessCodeExpiryLabel}` : ""}.
+                      Renew or subscribe below to restore data pulling.
+                    </p>
+                  </div>
+                </div>
+                <div className="text-sm sm:text-base font-semibold text-white bg-white/15 rounded-md px-3 py-2 tracking-wide whitespace-nowrap">
+                  Access ended
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+
         {showAccessCodeBanner && (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }}>
             <Card className={`mb-6 border-0 shadow-sm ${accessCodeSeverityClass}`}>
