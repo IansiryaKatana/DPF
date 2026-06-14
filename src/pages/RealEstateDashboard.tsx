@@ -1126,10 +1126,10 @@ const RealEstateDashboard = () => {
 
               {/* Plan Selection - only active payment method */}
               <div
-                className={`grid gap-4 ${
+                className={`grid gap-4 grid-cols-1 ${
                   (Object.keys(REALESTATE_PLANS) as RealEstatePlanKey[]).filter((k) => !(showCurrentPlanSummary && paidPlanKey === k)).length <= 2
-                    ? "sm:grid-cols-2"
-                    : "sm:grid-cols-3"
+                    ? "md:grid-cols-2"
+                    : "md:grid-cols-2 xl:grid-cols-3"
                 }`}
               >
                 {(Object.entries(REALESTATE_PLANS) as [RealEstatePlanKey, (typeof REALESTATE_PLANS)[RealEstatePlanKey]][])
@@ -1148,7 +1148,7 @@ const RealEstateDashboard = () => {
                   return (
                     <div
                       key={key}
-                      className={`rounded-xl p-5 flex flex-col min-h-[240px] ${planShadeClass}`}
+                      className={`rounded-xl p-5 flex flex-col min-h-[240px] min-w-0 overflow-hidden ${planShadeClass}`}
                     >
                       <div className="mb-4">
                         {isCurrent && (
@@ -1188,12 +1188,12 @@ const RealEstateDashboard = () => {
                         )}
 
                         {activePaymentMethod === "paystack" && (
-                          <div className="flex flex-col gap-2 w-full">
+                          <div className="flex flex-col gap-2 w-full min-w-0">
                             {!isEnterprise && plan.billing_type === "recurring" && (
                               <Button
                                 variant="hero"
                                 size="sm"
-                                className={`w-full rounded-md py-6 px-4 justify-between ${
+                                className={`w-full h-auto min-h-10 py-2.5 px-3 whitespace-normal justify-start gap-2.5 ${
                                   isLockedForPurchase
                                     ? "bg-gradient-to-r from-[#5a1717] via-[#7f1d1d] to-[#991b1b] text-white hover:from-[#5a1717] hover:via-[#7f1d1d] hover:to-[#991b1b]"
                                     : ""
@@ -1205,22 +1205,27 @@ const RealEstateDashboard = () => {
                                   isLockedForPurchase
                                 }
                               >
-                                {isCurrent
-                                  ? "Current"
-                                  : isLockedForPurchase
-                                    ? "Locked until expiry"
-                                    : paystackLoading?.planKey === key && paystackLoading.mode === "subscription"
-                                      ? "Starting subscription checkout..."
-                                      : key === "pro"
-                                        ? "Subscribe (annual auto-renew)"
-                                        : "Subscribe (monthly auto-renew)"}
-                                <CreditCard className="w-4 h-4 ml-2" />
+                                <CreditCard className="w-4 h-4 shrink-0" />
+                                {isCurrent ? (
+                                  "Current"
+                                ) : isLockedForPurchase ? (
+                                  "Locked until expiry"
+                                ) : paystackLoading?.planKey === key && paystackLoading.mode === "subscription" ? (
+                                  "Starting checkout..."
+                                ) : (
+                                  <span className="flex min-w-0 flex-col items-start gap-0.5 text-left leading-snug">
+                                    <span className="font-semibold">Subscribe</span>
+                                    <span className="text-[11px] font-normal opacity-90">
+                                      {key === "pro" ? "Auto-renews annually" : "Auto-renews monthly"}
+                                    </span>
+                                  </span>
+                                )}
                               </Button>
                             )}
                             <Button
                               variant={!isEnterprise && plan.billing_type === "recurring" ? "outline" : "hero"}
                               size="sm"
-                              className={`w-full rounded-md py-6 px-4 justify-between ${
+                              className={`w-full h-auto min-h-10 py-2.5 px-3 whitespace-normal justify-start gap-2.5 ${
                                 isLockedForPurchase
                                   ? "bg-gradient-to-r from-[#5a1717] via-[#7f1d1d] to-[#991b1b] text-white hover:from-[#5a1717] hover:via-[#7f1d1d] hover:to-[#991b1b]"
                                   : ""
@@ -1232,16 +1237,24 @@ const RealEstateDashboard = () => {
                                 isLockedForPurchase
                               }
                             >
-                              {isCurrent
-                                ? "Current"
-                                : isLockedForPurchase
-                                  ? "Locked until expiry"
-                                  : paystackLoading?.planKey === key && paystackLoading.mode === "one_time"
-                                    ? "Starting secure checkout..."
-                                    : isEnterprise
-                                      ? "Pay with Debit or Credit Card"
-                                      : "Pay one-time"}
-                              <CreditCard className="w-4 h-4 ml-2" />
+                              <CreditCard className="w-4 h-4 shrink-0" />
+                              {isCurrent ? (
+                                "Current"
+                              ) : isLockedForPurchase ? (
+                                "Locked until expiry"
+                              ) : paystackLoading?.planKey === key && paystackLoading.mode === "one_time" ? (
+                                "Starting checkout..."
+                              ) : isEnterprise ? (
+                                <span className="flex min-w-0 flex-col items-start gap-0.5 text-left leading-snug">
+                                  <span className="font-semibold">Pay with card</span>
+                                  <span className="text-[11px] font-normal opacity-90">One-time lifetime access</span>
+                                </span>
+                              ) : (
+                                <span className="flex min-w-0 flex-col items-start gap-0.5 text-left leading-snug">
+                                  <span className="font-semibold">Pay one-time</span>
+                                  <span className="text-[11px] font-normal opacity-90">Single payment access</span>
+                                </span>
+                              )}
                             </Button>
                           </div>
                         )}

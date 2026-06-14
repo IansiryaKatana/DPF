@@ -187,7 +187,7 @@ serve(async (req) => {
       currency,
       description: `Data Pulse Flow Real Estate Suite (${plan})`,
       invoice_date: nowIso,
-      due_date: nowIso,
+      due_date: periodEndIso,
       status: "paid",
       paid_at: nowIso,
       stripe_invoice_id: invoiceExternalId,

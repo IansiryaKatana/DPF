@@ -36,6 +36,9 @@ verify_jwt = false
 [functions.paystack-webhook]
 verify_jwt = false
 
+[functions.replay-paystack-subscription-charge]
+verify_jwt = false
+
 [functions.paystack-subscription-manage-link]
 verify_jwt = false
 

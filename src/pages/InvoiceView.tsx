@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, Download, CheckCircle, Clock, AlertTriangle } from "lucide-react";
 import { format } from "date-fns";
 import jsPDF from "jspdf";
+import { formatInvoiceDisplayDate, getInvoiceSecondaryDate, paidInvoiceNeedsDueDateRepair, resolveServicePeriodEndForPaidInvoice } from "@/lib/invoice-display";
 
 interface BrandingSettings {
   company_name: string;
@@ -35,7 +36,7 @@ function lineItemDisplayAmount(item: { quantity: unknown; unit_price: unknown; a
 
 const InvoiceView = () => {
   const { id } = useParams<{ id: string }>();
-  const { user, loading } = useAuth();
+  const { user, loading, isAdmin } = useAuth();
   const navigate = useNavigate();
   const [invoice, setInvoice] = useState<any>(null);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
@@ -47,6 +48,7 @@ const InvoiceView = () => {
     company_website: "",
   });
   const [clientProfile, setClientProfile] = useState<any>(null);
+  const [servicePeriodEnd, setServicePeriodEnd] = useState<string | null>(null);
   const [loadingData, setLoadingData] = useState(true);
 
   useEffect(() => {
@@ -67,16 +69,54 @@ const InvoiceView = () => {
 
       if (invoiceRes.data) {
         const inv = invoiceRes.data;
-        // Client-side overdue detection
         if (inv.status === "pending" && inv.due_date && new Date(inv.due_date) < new Date()) {
           inv.status = "overdue";
         }
+
+        const paidAt = String(inv.paid_at ?? inv.invoice_date ?? "");
+        const [{ data: prof }, { data: sub }, { data: coveringCodes }, { data: nextCode }] = await Promise.all([
+          supabase.from("profiles").select("*").eq("user_id", inv.user_id).maybeSingle(),
+          supabase.from("subscriptions").select("current_period_end").eq("user_id", inv.user_id).maybeSingle(),
+          paidAt
+            ? supabase
+              .from("client_access_codes")
+              .select("expires_at")
+              .eq("user_id", inv.user_id)
+              .lte("issued_at", paidAt)
+              .gte("expires_at", paidAt)
+              .order("issued_at", { ascending: false })
+              .limit(1)
+            : Promise.resolve({ data: null }),
+          supabase
+            .from("client_access_codes")
+            .select("expires_at")
+            .eq("user_id", inv.user_id)
+            .gt("expires_at", inv.invoice_date ?? paidAt)
+            .order("expires_at", { ascending: true })
+            .limit(1),
+        ]);
+
+        const accessExpires = coveringCodes?.[0]?.expires_at ?? nextCode?.[0]?.expires_at ?? null;
+        const resolvedServiceEnd = resolveServicePeriodEndForPaidInvoice(
+          inv,
+          accessExpires,
+          sub?.current_period_end ?? null,
+        );
+        setServicePeriodEnd(resolvedServiceEnd);
+
+        if (isAdmin && paidInvoiceNeedsDueDateRepair(inv, resolvedServiceEnd) && resolvedServiceEnd) {
+          const { data: repaired } = await supabase
+            .from("invoices")
+            .update({ due_date: resolvedServiceEnd })
+            .eq("id", inv.id)
+            .select("*")
+            .maybeSingle();
+          if (repaired) {
+            inv.due_date = repaired.due_date;
+          }
+        }
+
         setInvoice(inv);
-        const { data: prof } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("user_id", invoiceRes.data.user_id)
-          .maybeSingle();
         setClientProfile(prof);
       }
 
@@ -93,7 +133,7 @@ const InvoiceView = () => {
       setLoadingData(false);
     };
     fetchData();
-  }, [user, id]);
+  }, [user, id, isAdmin]);
 
   const formatAmount = (amt: number) =>
     Number(amt).toLocaleString("en-US", { minimumFractionDigits: 2 });
@@ -136,9 +176,15 @@ const InvoiceView = () => {
     doc.setFont("helvetica", "normal");
     doc.setTextColor(100, 100, 100);
     doc.text(`Invoice #: ${invoice.id.slice(0, 8).toUpperCase()}`, pageWidth - margin, 40, { align: "right" });
-    doc.text(`Date: ${format(new Date(invoice.invoice_date), "MMMM d, yyyy")}`, pageWidth - margin, 45, { align: "right" });
-    if (invoice.due_date) {
-      doc.text(`Due: ${format(new Date(invoice.due_date), "MMMM d, yyyy")}`, pageWidth - margin, 50, { align: "right" });
+    doc.text(`Date: ${formatInvoiceDisplayDate(invoice.invoice_date)}`, pageWidth - margin, 45, { align: "right" });
+    const secondaryDate = getInvoiceSecondaryDate(invoice, { servicePeriodEnd });
+    if (secondaryDate) {
+      doc.text(
+        `${secondaryDate.label}: ${formatInvoiceDisplayDate(secondaryDate.date)}`,
+        pageWidth - margin,
+        50,
+        { align: "right" },
+      );
     }
 
     const statusLabel = invoice.status.charAt(0).toUpperCase() + invoice.status.slice(1);
@@ -275,6 +321,8 @@ const InvoiceView = () => {
     ? lineItems
     : [{ id: "fallback", description: invoice.description || "Service charge", quantity: 1, unit_price: Number(invoice.amount), amount: Number(invoice.amount) }];
 
+  const secondaryDate = getInvoiceSecondaryDate(invoice, { servicePeriodEnd });
+
   return (
     <div className="min-h-screen bg-muted/30">
       <nav className="border-b border-border bg-card print:hidden">
@@ -320,11 +368,11 @@ const InvoiceView = () => {
                 Invoice #: <span className="font-mono text-foreground">{invoice.id.slice(0, 8).toUpperCase()}</span>
               </p>
               <p className="text-sm text-muted-foreground">
-                Date: {format(new Date(invoice.invoice_date), "MMMM d, yyyy")}
+                Date: {formatInvoiceDisplayDate(invoice.invoice_date)}
               </p>
-              {invoice.due_date && (
+              {secondaryDate && (
                 <p className="text-sm text-muted-foreground">
-                  Due: {format(new Date(invoice.due_date), "MMMM d, yyyy")}
+                  {secondaryDate.label}: {formatInvoiceDisplayDate(secondaryDate.date)}
                 </p>
               )}
               <div className="mt-3">

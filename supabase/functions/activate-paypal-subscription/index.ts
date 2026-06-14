@@ -107,7 +107,7 @@ serve(async (req) => {
       currency: "USD",
       description: `Data Pulse Flow Shopify Suite (${planKey})`,
       invoice_date: nowIso,
-      due_date: nowIso,
+      due_date: nextBilling,
       status: "paid",
       paid_at: nowIso,
       stripe_invoice_id: `paypal_sub:${subscriptionId}`,

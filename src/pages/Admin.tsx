@@ -50,6 +50,10 @@ const Admin = () => {
   const [paystackChargeCurrency, setPaystackChargeCurrency] = useState<"KES" | "USD">("KES");
   /** Cached Paystack Plan codes for Shopify subscription checkout (`PLN_…`). Leave blank to auto-create on next subscribe. */
   const [paystackSubscriptionPlanCodes, setPaystackSubscriptionPlanCodes] = useState({ growth: "", pro: "" });
+  const [paystackReplayReference, setPaystackReplayReference] = useState("");
+  const [paystackReplayUserId, setPaystackReplayUserId] = useState("");
+  const [paystackReplaySubscriptionCode, setPaystackReplaySubscriptionCode] = useState("");
+  const [paystackReplayLoading, setPaystackReplayLoading] = useState(false);
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [uploadingDeliverable, setUploadingDeliverable] = useState(false);
@@ -232,6 +236,58 @@ const Admin = () => {
       toast.error(error?.message || "Failed to save plan codes.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleReplayPaystackSubscriptionCharge = async () => {
+    const reference = paystackReplayReference.trim();
+    if (!reference) {
+      toast.error("Enter the Paystack transaction reference from the renewal charge.");
+      return;
+    }
+    if (!session?.access_token) {
+      toast.error("Please sign in again.");
+      return;
+    }
+
+    setPaystackReplayLoading(true);
+    try {
+      const baseUrl = String(import.meta.env.VITE_SUPABASE_URL ?? "").trim().replace(/\/$/, "");
+      const anonKey = String(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "").trim();
+      const response = await fetch(`${baseUrl}/functions/v1/replay-paystack-subscription-charge`, {
+        method: "POST",
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          reference,
+          ...(paystackReplayUserId ? { userId: paystackReplayUserId, productLine: "shopify" } : {}),
+          ...(paystackReplaySubscriptionCode.trim()
+            ? { subscriptionCode: paystackReplaySubscriptionCode.trim() }
+            : {}),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || data?.reason || data?.message || `Replay failed (${response.status})`);
+      }
+      if (data?.status === "ALREADY_PROCESSED") {
+        toast.info(`This charge was already fulfilled (${reference}).`);
+      } else {
+        toast.success(
+          data?.accessCodeExpiresAt
+            ? `Renewal applied. Code valid until ${new Date(data.accessCodeExpiresAt).toLocaleString()}.`
+            : "Renewal charge replayed successfully.",
+        );
+      }
+      setPaystackReplayReference("");
+      setPaystackReplaySubscriptionCode("");
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to replay Paystack subscription charge.");
+    } finally {
+      setPaystackReplayLoading(false);
     }
   };
 
@@ -663,6 +719,63 @@ const Admin = () => {
                     <Button type="button" variant="secondary" onClick={handleSavePaystackSubscriptionPlanCodes} disabled={saving}>
                       <Save className="w-4 h-4 mr-2" />
                       {saving ? "Saving..." : "Save subscription plan codes"}
+                    </Button>
+                  </div>
+
+                  <div className="border-t border-border pt-4 mt-4 space-y-4">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Replay missed subscription renewal</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        If Paystack charged a renewal but no invoice was created and the access code was not extended,
+                        paste the transaction reference from Paystack Dashboard and replay fulfillment.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="paystack-replay-client">Client (optional — use if auto-match fails)</Label>
+                      <select
+                        id="paystack-replay-client"
+                        value={paystackReplayUserId}
+                        onChange={(e) => setPaystackReplayUserId(e.target.value)}
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      >
+                        <option value="">Auto-detect from Paystack email</option>
+                        {clients.map((client: any) => (
+                          <option key={client.user_id} value={client.user_id}>
+                            {client.name} ({client.email}) — {client.plan}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="paystack-replay-subscription-code">Subscription code (optional SUB_…)</Label>
+                      <Input
+                        id="paystack-replay-subscription-code"
+                        value={paystackReplaySubscriptionCode}
+                        onChange={(e) => setPaystackReplaySubscriptionCode(e.target.value)}
+                        placeholder="SUB_xxxxxxxxxx"
+                        className="font-mono text-sm"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        From Paystack → Recurring → Subscriptions → open the subscriber → copy Subscription Code.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="paystack-replay-reference">Transaction reference</Label>
+                      <Input
+                        id="paystack-replay-reference"
+                        value={paystackReplayReference}
+                        onChange={(e) => setPaystackReplayReference(e.target.value)}
+                        placeholder="114e42871d938ba41b934ffedd029713cc242bd556bf08fa"
+                        className="font-mono text-sm"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={handleReplayPaystackSubscriptionCharge}
+                      disabled={paystackReplayLoading}
+                    >
+                      {paystackReplayLoading ? "Replaying..." : "Replay subscription charge"}
                     </Button>
                   </div>
                 </CardContent>

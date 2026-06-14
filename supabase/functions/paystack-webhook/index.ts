@@ -1,10 +1,10 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.2";
 import {
-  augmentPaystackPaymentWithSubscriptionCode,
-  fulfillPaystackSubscriptionPayment,
-  paymentHasPaystackPlan,
-  resolveUserIdFromChargePayload,
+  extractTransactionReferenceFromInvoiceEvent,
+  fetchVerifiedPaystackTransaction,
+  invoiceUpdateLooksPaid,
+  processPaystackSubscriptionCharge,
 } from "../_shared/paystack-subscription-fulfillment.ts";
 
 const corsHeaders = {
@@ -35,6 +35,19 @@ const extractSubscriptionCode = (data: Record<string, unknown>): string => {
   return "";
 };
 
+const loadPaystackSecret = async (supabase: ReturnType<typeof createClient>): Promise<string> => {
+  const { data: settings, error: settingsError } = await supabase
+    .from("admin_settings")
+    .select("setting_key, setting_value")
+    .in("setting_key", ["paystack_secret_key"]);
+  if (settingsError) throw new Error(`Failed to load Paystack settings: ${settingsError.message}`);
+  const paystackSecret = String(
+    settings?.find((s) => s.setting_key === "paystack_secret_key")?.setting_value ?? "",
+  ).trim();
+  if (!paystackSecret) throw new Error("Paystack not configured");
+  return paystackSecret;
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -49,21 +62,7 @@ serve(async (req) => {
   try {
     const rawBody = await req.text();
     const signature = req.headers.get("x-paystack-signature") ?? "";
-
-    const { data: settings, error: settingsError } = await supabase
-      .from("admin_settings")
-      .select("setting_key, setting_value")
-      .in("setting_key", ["paystack_secret_key"]);
-    if (settingsError) throw new Error(`Failed to load Paystack settings: ${settingsError.message}`);
-    const paystackSecret = String(
-      settings?.find((s) => s.setting_key === "paystack_secret_key")?.setting_value ?? "",
-    ).trim();
-    if (!paystackSecret) {
-      return new Response(JSON.stringify({ error: "Paystack not configured" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    const paystackSecret = await loadPaystackSecret(supabase);
 
     const hash = await hmacSha512Hex(paystackSecret, rawBody);
     if (hash !== signature) {
@@ -78,37 +77,78 @@ serve(async (req) => {
     const data = event.data ?? {};
 
     if (eventName === "charge.success") {
-      const payment = data as Record<string, unknown>;
-      if (!paymentHasPaystackPlan(payment)) {
-        return new Response(JSON.stringify({ received: true, ignored: "not_subscription_plan" }), {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      const resolved = await resolveUserIdFromChargePayload(supabase, payment);
-      if (!resolved) {
-        return new Response(JSON.stringify({ received: true, ignored: "unresolved_user" }), {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      const paymentReady = await augmentPaystackPaymentWithSubscriptionCode(payment, paystackSecret);
-
-      const result = await fulfillPaystackSubscriptionPayment({
+      const result = await processPaystackSubscriptionCharge({
         supabase,
-        payment: paymentReady,
-        userId: resolved.userId,
-        productLine: resolved.productLine,
+        payment: data as Record<string, unknown>,
+        paystackSecret,
       });
+
+      if (result.status === "ignored") {
+        return new Response(JSON.stringify({ received: true, ignored: result.reason }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (result.status === "error") {
+        throw new Error(result.message);
+      }
 
       return new Response(
         JSON.stringify({
           received: true,
           processed: !result.alreadyProcessed,
           reference: result.reference,
-          userId: resolved.userId,
+          userId: result.userId,
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    if (eventName === "invoice.update") {
+      if (!invoiceUpdateLooksPaid(data)) {
+        return new Response(JSON.stringify({ received: true, ignored: "invoice_not_paid" }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const reference = extractTransactionReferenceFromInvoiceEvent(data);
+      if (!reference) {
+        return new Response(JSON.stringify({ received: true, ignored: "no_transaction_reference" }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const payment = await fetchVerifiedPaystackTransaction(reference, paystackSecret);
+      const sub = data.subscription;
+      if (sub && typeof sub === "object" && !payment.subscription) {
+        payment.subscription = sub;
+      }
+
+      const result = await processPaystackSubscriptionCharge({
+        supabase,
+        payment,
+        paystackSecret,
+      });
+
+      if (result.status === "ignored") {
+        return new Response(JSON.stringify({ received: true, ignored: result.reason, source: "invoice.update" }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (result.status === "error") {
+        throw new Error(result.message);
+      }
+
+      return new Response(
+        JSON.stringify({
+          received: true,
+          source: "invoice.update",
+          processed: !result.alreadyProcessed,
+          reference: result.reference,
+          userId: result.userId,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
